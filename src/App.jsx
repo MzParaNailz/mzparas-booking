@@ -9,7 +9,7 @@ const [time,setTime] = useState("")
 
 function normalizePhone(phone){
 
-const digits = phone.replace(/\D/g,'')
+const digits = String(phone || "").replace(/\D/g,'')
 
 if(digits.length === 10){
 return "+1"+digits
@@ -19,11 +19,11 @@ if(digits.length === 11 && digits.startsWith("1")){
 return "+"+digits
 }
 
-if(phone.startsWith("+")){
-return phone
+if(String(phone).trim().startsWith("+")){
+return String(phone).trim()
 }
 
-return phone
+return String(phone).trim()
 
 }
 
@@ -72,7 +72,9 @@ return
 
 await sendBookingSMS(phone,date,time)
 
-alert("Appointment booked!")
+setTimeout(()=>{
+alert("Appointment booked! Confirmation text sent.")
+},800)
 
 }
 
@@ -96,7 +98,7 @@ onChange={(e)=>setName(e.target.value)}
 style={{width:"100%",padding:"10px",marginBottom:"10px"}}
 value={phone}
 onChange={(e)=>setPhone(e.target.value)}
-placeholder="+14046429408"
+placeholder="4046429408"
 />
 
 <label>Date</label>
