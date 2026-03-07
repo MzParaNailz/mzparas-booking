@@ -857,10 +857,4 @@ export default function App() {
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
             <li>Stripe deposit checkout</li>
             <li>SMS confirmations + reminders</li>
-            <li>Real hosted booking link for Instagram</li>
-          </ul>
-        </div>
-      </footer>
-    </div>
-  );
-}
+            <li>R
