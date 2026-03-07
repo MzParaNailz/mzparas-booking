@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   CalendarDays,
@@ -32,7 +32,6 @@ const DEFAULT_SERVICES = [
   { id: "svc-design", name: "Design Add-On", durationMin: 15, price: 10 },
 ];
 
-// Hours per weekday 0=Sun...6=Sat
 const DEFAULT_HOURS = {
   0: { open: "10:00", close: "18:00", closed: false },
   1: { open: "10:00", close: "19:00", closed: false },
@@ -48,11 +47,10 @@ const DEFAULT_SETTINGS = {
   locationLine: "Flatbush, Brooklyn, NY",
   phone: "516-451-4570",
   instagram: "@MzParasNailz",
-  // scheduling
   slotStepMin: 15,
   bufferMin: 10,
   requirePhone: true,
-  adminPin: "1234", // change in Admin
+  adminPin: "1234",
 };
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -63,12 +61,15 @@ function parseISODate(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
+
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60000);
 }
+
 function overlaps(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd;
 }
+
 function formatTime(date) {
   const h = date.getHours();
   const m = date.getMinutes();
@@ -76,9 +77,11 @@ function formatTime(date) {
   const hh = h % 12 === 0 ? 12 : h % 12;
   return `${hh}:${pad2(m)} ${ampm}`;
 }
+
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
+
 function downloadText(filename, text) {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -97,8 +100,33 @@ function loadLocal() {
     return null;
   }
 }
+
 function saveLocal(state) {
   localStorage.setItem(LS_KEY, JSON.stringify(state));
+}
+
+async function sendBookingSMS(phone, service, date, time, locationLine) {
+  try {
+    await fetch("/api/send-sms", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        to: phone,
+        message: `Thanks for booking with Mz Para's Nailz 💅
+
+Service: ${service}
+Date: ${date}
+Time: ${time}
+Location: ${locationLine}
+
+We look forward to seeing you!`,
+      }),
+    });
+  } catch (err) {
+    console.error("SMS failed", err);
+  }
 }
 
 export default function App() {
@@ -125,12 +153,10 @@ export default function App() {
 
   const todayISO = useMemo(() => toISODate(new Date()), []);
 
-  // persist
   useEffect(() => {
     saveLocal({ services, hours, settings, appointments });
   }, [services, hours, settings, appointments]);
 
-  // reset when date/services change
   useEffect(() => {
     setSelectedTimeISO(null);
     setErrorMsg("");
@@ -153,6 +179,7 @@ export default function App() {
   );
 
   const dayOfWeek = useMemo(() => parseISODate(selectedDate).getDay(), [selectedDate]);
+
   const hoursForDay = useMemo(
     () => hours?.[dayOfWeek] ?? { open: "10:00", close: "18:00", closed: false },
     [hours, dayOfWeek]
@@ -160,7 +187,12 @@ export default function App() {
 
   const friendlyDate = useMemo(() => {
     const d = parseISODate(selectedDate);
-    return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    return d.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
   }, [selectedDate]);
 
   function toggleService(id) {
@@ -198,7 +230,6 @@ export default function App() {
       const end = addMinutes(t, needed);
       if (end > close) continue;
 
-      // same-day: prevent past slots
       if (selectedDate === todayISO) {
         const grace = addMinutes(new Date(), 10);
         if (t < grace) continue;
@@ -209,6 +240,7 @@ export default function App() {
 
       results.push({ start: t, end });
     }
+
     return results;
   }, [appointments, hoursForDay, selectedDate, settings.bufferMin, settings.slotStepMin, todayISO, totalDuration]);
 
@@ -237,7 +269,6 @@ export default function App() {
     const start = new Date(selectedTimeISO);
     const end = addMinutes(start, totalDuration + clamp(settings.bufferMin, 0, 60));
 
-    // recheck conflict
     const conflict = appointments
       .filter((a) => a.date === selectedDate)
       .some((a) => overlaps(start, end, new Date(a.startISO), new Date(a.endISO)));
@@ -264,9 +295,24 @@ export default function App() {
       status: "requested",
     };
 
-    setAppointments((prev) => [...prev, appt].sort((a, b) => a.startISO.localeCompare(b.startISO)));
+    setAppointments((prev) =>
+      [...prev, appt].sort((a, b) => a.startISO.localeCompare(b.startISO))
+    );
+
+    if (customerPhone.trim()) {
+      const serviceNames = selectedServices.map((s) => s.name).join(", ");
+      const timeText = formatTime(start);
+      sendBookingSMS(
+        customerPhone.trim(),
+        serviceNames,
+        selectedDate,
+        timeText,
+        settings.locationLine
+      );
+    }
+
     setErrorMsg("");
-    setSuccessMsg("Request received. You’re on the schedule for review.");
+    setSuccessMsg("Request received. You're on the schedule!");
     setCustomerNotes("");
     setSelectedTimeISO(null);
   }
@@ -299,6 +345,7 @@ export default function App() {
           .map((id) => services.find((s) => s.id === id)?.name)
           .filter(Boolean)
           .join(" | ");
+
         return [
           a.id,
           a.createdAtISO,
@@ -368,10 +415,8 @@ export default function App() {
             <TabsTrigger value="admin">Admin</TabsTrigger>
           </TabsList>
 
-          {/* BOOK */}
           <TabsContent value="book" className="mt-6">
             <div className="grid gap-6 lg:grid-cols-3">
-              {/* left */}
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl shadow-sm">
                   <CardHeader>
@@ -445,7 +490,6 @@ export default function App() {
                 </Card>
               </div>
 
-              {/* middle */}
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl shadow-sm">
                   <CardHeader>
@@ -513,15 +557,15 @@ export default function App() {
                       <Button className="h-12 w-full rounded-2xl" onClick={book}>
                         Request Appointment
                       </Button>
+
                       <div className="text-xs text-neutral-500">
-                        This is a local demo scheduler. Next we’ll add real deposits + SMS.
+                        Booking now sends a confirmation text if a phone number is entered.
                       </div>
                     </div>
                   </CardContent>
                 </Card>
               </div>
 
-              {/* right */}
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl shadow-sm">
                   <CardHeader>
@@ -541,6 +585,7 @@ export default function App() {
                             .map((id) => services.find((s) => s.id === id)?.name)
                             .filter(Boolean)
                             .join(", ");
+
                           return (
                             <motion.div
                               key={a.id}
@@ -577,7 +622,6 @@ export default function App() {
             </div>
           </TabsContent>
 
-          {/* ADMIN */}
           <TabsContent value="admin" className="mt-6">
             <div className="grid gap-6 lg:grid-cols-3">
               <div className="lg:col-span-1">
@@ -592,8 +636,9 @@ export default function App() {
                           <div className="flex items-center gap-2 font-medium">
                             <Lock className="h-4 w-4" /> Enter PIN to manage appointments
                           </div>
-                          <div className="mt-1 text-xs text-neutral-600">Default is 1234 (change it).</div>
+                          <div className="mt-1 text-xs text-neutral-600">Default is 1234.</div>
                         </div>
+
                         <div className="grid gap-2">
                           <Label htmlFor="pin">PIN</Label>
                           <Input
@@ -604,6 +649,7 @@ export default function App() {
                             placeholder="••••"
                           />
                         </div>
+
                         <Button
                           className="h-11 rounded-2xl"
                           onClick={() => {
@@ -628,17 +674,29 @@ export default function App() {
                         </div>
 
                         <div className="grid gap-2">
-                          <Button variant="outline" className="h-11 rounded-2xl border-neutral-200" onClick={() => setAdminAuthed(false)}>
+                          <Button
+                            variant="outline"
+                            className="h-11 rounded-2xl border-neutral-200"
+                            onClick={() => setAdminAuthed(false)}
+                          >
                             Lock Admin
                           </Button>
-                          <Button variant="outline" className="h-11 rounded-2xl border-neutral-200" onClick={exportCSV}>
+
+                          <Button
+                            variant="outline"
+                            className="h-11 rounded-2xl border-neutral-200"
+                            onClick={exportCSV}
+                          >
                             <Download className="mr-2 h-4 w-4" /> Export CSV
                           </Button>
+
                           <Button
                             variant="destructive"
                             className="h-11 rounded-2xl"
                             onClick={() => {
-                              if (confirm("Delete ALL appointments?")) setAppointments([]);
+                              if (confirm("Delete ALL appointments?")) {
+                                setAppointments([]);
+                              }
                             }}
                           >
                             <Trash2 className="mr-2 h-4 w-4" /> Clear All
@@ -656,26 +714,45 @@ export default function App() {
                   <CardContent className="space-y-4">
                     <div className="grid gap-2">
                       <Label>Salon name</Label>
-                      <Input value={settings.salonName} onChange={(e) => setSettings((p) => ({ ...p, salonName: e.target.value }))} />
+                      <Input
+                        value={settings.salonName}
+                        onChange={(e) => setSettings((p) => ({ ...p, salonName: e.target.value }))}
+                      />
                     </div>
+
                     <div className="grid gap-2">
                       <Label>Location line</Label>
-                      <Input value={settings.locationLine} onChange={(e) => setSettings((p) => ({ ...p, locationLine: e.target.value }))} />
+                      <Input
+                        value={settings.locationLine}
+                        onChange={(e) => setSettings((p) => ({ ...p, locationLine: e.target.value }))}
+                      />
                     </div>
+
                     <div className="grid gap-2">
                       <Label>Phone</Label>
-                      <Input value={settings.phone} onChange={(e) => setSettings((p) => ({ ...p, phone: e.target.value }))} />
+                      <Input
+                        value={settings.phone}
+                        onChange={(e) => setSettings((p) => ({ ...p, phone: e.target.value }))}
+                      />
                     </div>
+
                     <div className="grid gap-2">
                       <Label>Instagram</Label>
-                      <Input value={settings.instagram} onChange={(e) => setSettings((p) => ({ ...p, instagram: e.target.value }))} />
+                      <Input
+                        value={settings.instagram}
+                        onChange={(e) => setSettings((p) => ({ ...p, instagram: e.target.value }))}
+                      />
                     </div>
 
                     <Separator />
 
                     <div className="grid gap-2">
                       <Label>Admin PIN</Label>
-                      <Input type="password" value={settings.adminPin} onChange={(e) => setSettings((p) => ({ ...p, adminPin: e.target.value }))} />
+                      <Input
+                        type="password"
+                        value={settings.adminPin}
+                        onChange={(e) => setSettings((p) => ({ ...p, adminPin: e.target.value }))}
+                      />
                       <div className="text-xs text-neutral-600">Change this from the default.</div>
                     </div>
                   </CardContent>
@@ -707,17 +784,21 @@ export default function App() {
                               .map((id) => services.find((s) => s.id === id)?.name)
                               .filter(Boolean)
                               .join(", ");
+
                             return (
                               <div key={a.id} className="rounded-2xl border border-neutral-200 bg-white p-4">
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
                                     <div className="font-semibold">{a.customer?.name}</div>
-                                    <div className="text-sm text-neutral-600">{a.date} • {formatTime(start)}</div>
+                                    <div className="text-sm text-neutral-600">
+                                      {a.date} • {formatTime(start)}
+                                    </div>
                                     <div className="text-sm text-neutral-600">{svcs}</div>
                                     {a.customer?.phone ? (
                                       <div className="text-sm text-neutral-600">Phone: {a.customer.phone}</div>
                                     ) : null}
                                   </div>
+
                                   <div className="flex flex-col items-end gap-2">
                                     <div className="font-semibold">${a.totalPrice}</div>
                                     <Button
