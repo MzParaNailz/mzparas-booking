@@ -8,6 +8,7 @@ export default async function handler(req, res) {
   const hasSid = !!process.env.TWILIO_ACCOUNT_SID;
   const hasToken = !!process.env.TWILIO_AUTH_TOKEN;
   const hasPhone = !!process.env.TWILIO_PHONE_NUMBER;
+    const testSms = process.env.TEST_SMS || null;
 
   if (!hasSid || !hasToken || !hasPhone) {
     return res.status(500).json({
@@ -38,11 +39,12 @@ export default async function handler(req, res) {
       to,
     });
 
-    return res.status(200).json({ success: true, sid: result.sid });
-  } catch (error) {
-    return res.status(500).json({
+        return res.status(500).json({
       success: false,
-      error: error.message,
+      debug: {
+        hasSid,
+        hasToken,
+        hasPhone,
+        testSms,
+      },
     });
-  }
-}
