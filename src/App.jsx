@@ -446,10 +446,13 @@ export default function App() {
                         const checked = selectedServiceIds.includes(s.id);
                         return (
                           <button
+                            type="button"
                             key={s.id}
                             onClick={() => toggleService(s.id)}
-                            className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition hover:bg-neutral-50 ${
-                              checked ? "border-neutral-900" : "border-neutral-200"
+                            className={`flex w-full items-center justify-between rounded-2xl border bg-white px-4 py-3 text-left transition focus:outline-none ${
+                              checked
+                                ? "border-neutral-900 ring-1 ring-neutral-300"
+                                : "border-neutral-200 hover:bg-neutral-50"
                             }`}
                           >
                             <div>
