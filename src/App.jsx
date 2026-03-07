@@ -21,7 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-const LS_KEY = "mzparas_lux_booking_v1";
+const LS_KEY = "mzparas_lux_booking_v2";
 
 const DEFAULT_SERVICES = [
   { id: "svc-acrylic-full", name: "Full Set Acrylic", durationMin: 90, price: 65 },
@@ -105,15 +105,26 @@ function saveLocal(state) {
   localStorage.setItem(LS_KEY, JSON.stringify(state));
 }
 
+function normalizePhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (String(phone).trim().startsWith("+")) return String(phone).trim();
+  return String(phone).trim();
+}
+
 async function sendBookingSMS(phone, service, date, time, locationLine) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return;
+
   try {
-    await fetch("/api/send-sms", {
+    const res = await fetch("/api/send-sms", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        to: phone,
+        to: normalized,
         message: `Thanks for booking with Mz Para's Nailz 💅
 
 Service: ${service}
@@ -124,8 +135,13 @@ Location: ${locationLine}
 We look forward to seeing you!`,
       }),
     });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("SMS API error:", data);
+    }
   } catch (err) {
-    console.error("SMS failed", err);
+    console.error("SMS failed:", err);
   }
 }
 
@@ -312,7 +328,9 @@ export default function App() {
     }
 
     setErrorMsg("");
-    setSuccessMsg("Request received. You're on the schedule!");
+    setSuccessMsg("Appointment booked! Confirmation text sent.");
+    setCustomerName("");
+    setCustomerPhone("");
     setCustomerNotes("");
     setSelectedTimeISO(null);
   }
@@ -540,7 +558,7 @@ export default function App() {
                           id="phone"
                           value={customerPhone}
                           onChange={(e) => setCustomerPhone(e.target.value)}
-                          placeholder="e.g., (516) 451-4570"
+                          placeholder="e.g., 404-642-9408"
                         />
                       </div>
 
@@ -559,7 +577,7 @@ export default function App() {
                       </Button>
 
                       <div className="text-xs text-neutral-500">
-                        Booking now sends a confirmation text if a phone number is entered.
+                        Booking sends a confirmation text if a phone number is entered.
                       </div>
                     </div>
                   </CardContent>
