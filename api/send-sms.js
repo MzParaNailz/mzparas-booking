@@ -5,6 +5,21 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const hasSid = !!process.env.TWILIO_ACCOUNT_SID;
+  const hasToken = !!process.env.TWILIO_AUTH_TOKEN;
+  const hasPhone = !!process.env.TWILIO_PHONE_NUMBER;
+
+  if (!hasSid || !hasToken || !hasPhone) {
+    return res.status(500).json({
+      success: false,
+      debug: {
+        hasSid,
+        hasToken,
+        hasPhone,
+      },
+    });
+  }
+
   const { to, message } = req.body || {};
 
   if (!to || !message) {
