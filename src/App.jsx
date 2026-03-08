@@ -28,9 +28,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { supabase } from "@/lib/supabase";
 
-const LS_KEY = "mzparas_lux_booking_v9";
-const PENDING_KEY = "mzparas_pending_booking_v3";
+const PENDING_KEY = "mzparas_pending_booking_v4";
 const REQUIRED_DEPOSIT = 50;
 const ZELLE_RECIPIENT = "516-451-4570";
 
@@ -121,19 +121,6 @@ function downloadText(filename, text) {
   URL.revokeObjectURL(url);
 }
 
-function loadLocal() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveLocal(state) {
-  localStorage.setItem(LS_KEY, JSON.stringify(state));
-}
-
 function normalizePhone(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
   if (digits.length === 10) return `+1${digits}`;
@@ -174,6 +161,10 @@ We look forward to seeing you!`,
   }
 }
 
+function savePendingBooking(booking) {
+  localStorage.setItem(PENDING_KEY, JSON.stringify(booking));
+}
+
 function loadPendingBooking() {
   try {
     const raw = localStorage.getItem(PENDING_KEY);
@@ -181,10 +172,6 @@ function loadPendingBooking() {
   } catch {
     return null;
   }
-}
-
-function savePendingBooking(booking) {
-  localStorage.setItem(PENDING_KEY, JSON.stringify(booking));
 }
 
 function clearPendingBooking() {
@@ -225,16 +212,52 @@ function downloadAppointmentICS(booking, salonName, locationLine, serviceNames) 
   downloadText("mzparas-appointment.ics", ics);
 }
 
-export default function App() {
-  const localLoaded = useMemo(() => loadLocal(), []);
+function dbRowToAppointment(row) {
+  return {
+    id: row.id,
+    createdAtISO: row.created_at_iso,
+    date: row.date,
+    startISO: row.start_iso,
+    endISO: row.end_iso,
+    serviceIds: row.service_ids || [],
+    totalDurationMin: row.total_duration_min,
+    totalPrice: Number(row.total_price || 0),
+    customer: {
+      name: row.customer_name || "",
+      phone: row.customer_phone || "",
+      notes: row.customer_notes || "",
+    },
+    status: row.status,
+    paymentMethod: row.payment_method || "",
+  };
+}
 
-  const [services] = useState(localLoaded?.services ?? DEFAULT_SERVICES);
-  const [hours] = useState(localLoaded?.hours ?? DEFAULT_HOURS);
-  const [settings, setSettings] = useState(localLoaded?.settings ?? DEFAULT_SETTINGS);
-  const [appointments, setAppointments] = useState(localLoaded?.appointments ?? []);
+function appointmentToDbRow(appt) {
+  return {
+    id: appt.id,
+    created_at_iso: appt.createdAtISO,
+    date: appt.date,
+    start_iso: appt.startISO,
+    end_iso: appt.endISO,
+    service_ids: appt.serviceIds,
+    total_duration_min: appt.totalDurationMin,
+    total_price: appt.totalPrice,
+    customer_name: appt.customer?.name || "",
+    customer_phone: appt.customer?.phone || "",
+    customer_notes: appt.customer?.notes || "",
+    status: appt.status,
+    payment_method: appt.paymentMethod || "",
+  };
+}
+
+export default function App() {
+  const [services] = useState(DEFAULT_SERVICES);
+  const [hours] = useState(DEFAULT_HOURS);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [appointments, setAppointments] = useState([]);
 
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()));
-  const [selectedServiceId, setSelectedServiceId] = useState(() => DEFAULT_SERVICES[0].id);
+  const [selectedServiceId, setSelectedServiceId] = useState(DEFAULT_SERVICES[0].id);
   const [selectedTimeISO, setSelectedTimeISO] = useState(null);
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("stripe");
@@ -250,12 +273,31 @@ export default function App() {
 
   const [adminAuthed, setAdminAuthed] = useState(false);
   const [pinInput, setPinInput] = useState("");
+  const [loadingBookings, setLoadingBookings] = useState(true);
 
   const todayISO = useMemo(() => toISODate(new Date()), []);
 
+  async function refreshAppointments() {
+    setLoadingBookings(true);
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("*")
+      .order("start_iso", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      setErrorMsg("Could not load appointments from database.");
+      setLoadingBookings(false);
+      return;
+    }
+
+    setAppointments((data || []).map(dbRowToAppointment));
+    setLoadingBookings(false);
+  }
+
   useEffect(() => {
-    saveLocal({ services, hours, settings, appointments });
-  }, [services, hours, settings, appointments]);
+    refreshAppointments();
+  }, []);
 
   useEffect(() => {
     setSelectedTimeISO(null);
@@ -270,53 +312,61 @@ export default function App() {
 
     if (!depositStatus) return;
 
-    if (depositStatus === "success") {
-      const pending = loadPendingBooking();
+    async function finalizeStripeSuccess() {
+      if (depositStatus === "success") {
+        const pending = loadPendingBooking();
 
-      if (pending) {
-        const confirmedBooking = { ...pending, status: "confirmed" };
+        if (pending) {
+          const confirmedBooking = { ...pending, status: "confirmed" };
 
-        setAppointments((prev) => {
-          const exists = prev.some((a) => a.id === pending.id);
-          if (exists) return prev;
-          return [...prev, confirmedBooking].sort((a, b) => a.startISO.localeCompare(b.startISO));
-        });
+          const { error } = await supabase
+            .from("appointments")
+            .insert([appointmentToDbRow(confirmedBooking)]);
 
-        const start = new Date(pending.startISO);
-        const serviceNames = pending.serviceIds
-          .map((id) => services.find((s) => s.id === id)?.name)
-          .filter(Boolean)
-          .join(", ");
+          if (!error) {
+            const start = new Date(pending.startISO);
+            const serviceNames = pending.serviceIds
+              .map((id) => services.find((s) => s.id === id)?.name)
+              .filter(Boolean)
+              .join(", ");
 
-        sendBookingSMS(
-          pending.customer?.phone || "",
-          serviceNames,
-          pending.date,
-          formatTime(start),
-          settings.locationLine
-        );
+            sendBookingSMS(
+              pending.customer?.phone || "",
+              serviceNames,
+              pending.date,
+              formatTime(start),
+              settings.locationLine
+            );
 
-        setLastConfirmedBooking(confirmedBooking);
-        setLastZelleBooking(null);
-        clearPendingBooking();
-        setSuccessMsg("Deposit paid successfully. Your appointment is confirmed.");
-        setCustomerName("");
-        setCustomerPhone("");
-        setCustomerNotes("");
-        setSelectedTimeISO(null);
-      } else {
-        setSuccessMsg("Deposit paid successfully.");
+            setLastConfirmedBooking(confirmedBooking);
+            setLastZelleBooking(null);
+            clearPendingBooking();
+            setSuccessMsg("Deposit paid successfully. Your appointment is confirmed.");
+            setCustomerName("");
+            setCustomerPhone("");
+            setCustomerNotes("");
+            setSelectedTimeISO(null);
+            await refreshAppointments();
+          } else {
+            console.error(error);
+            setErrorMsg("Payment succeeded, but the appointment could not be saved.");
+          }
+        } else {
+          setSuccessMsg("Deposit paid successfully.");
+        }
       }
+
+      if (depositStatus === "cancel") {
+        clearPendingBooking();
+        setErrorMsg("Deposit payment was canceled. Your appointment was not confirmed.");
+      }
+
+      params.delete("deposit");
+      const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+      window.history.replaceState({}, "", newUrl);
     }
 
-    if (depositStatus === "cancel") {
-      clearPendingBooking();
-      setErrorMsg("Deposit payment was canceled. Your appointment was not confirmed.");
-    }
-
-    params.delete("deposit");
-    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
-    window.history.replaceState({}, "", newUrl);
+    finalizeStripeSuccess();
   }, [services, settings.locationLine]);
 
   const selectedServices = useMemo(
@@ -528,7 +578,7 @@ export default function App() {
     await startDepositCheckout();
   }
 
-  function bookWithZelle() {
+  async function bookWithZelle() {
     setSuccessMsg("");
     const err = validate();
     if (err) {
@@ -569,7 +619,17 @@ export default function App() {
       paymentMethod: "zelle",
     };
 
-    setAppointments((prev) => [...prev, zelleBooking].sort((a, b) => a.startISO.localeCompare(b.startISO)));
+    const { error } = await supabase
+      .from("appointments")
+      .insert([appointmentToDbRow(zelleBooking)]);
+
+    if (error) {
+      console.error(error);
+      setErrorMsg("Could not save the Zelle reservation.");
+      return;
+    }
+
+    await refreshAppointments();
     setLastZelleBooking(zelleBooking);
     setLastConfirmedBooking(null);
     setSuccessMsg("Zelle reservation request submitted. Your appointment will be confirmed after payment verification.");
@@ -587,39 +647,66 @@ export default function App() {
     bookWithStripe();
   }
 
-  function cancelAppt(id) {
-    setAppointments((prev) => prev.filter((a) => a.id !== id));
+  async function cancelAppt(id) {
+    const { error } = await supabase
+      .from("appointments")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error(error);
+      setErrorMsg("Could not cancel the appointment.");
+      return;
+    }
+
+    await refreshAppointments();
   }
 
-  function markCompleted(id) {
-    setAppointments((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: "completed" } : a))
-    );
+  async function markCompleted(id) {
+    const { error } = await supabase
+      .from("appointments")
+      .update({ status: "completed" })
+      .eq("id", id);
+
+    if (error) {
+      console.error(error);
+      setErrorMsg("Could not mark the appointment as completed.");
+      return;
+    }
+
+    await refreshAppointments();
   }
 
-  function markZelleConfirmed(id) {
-    setAppointments((prev) =>
-      prev.map((a) => {
-        if (a.id !== id) return a;
-        const updated = { ...a, status: "confirmed" };
+  async function markZelleConfirmed(id) {
+    const appt = appointments.find((a) => a.id === id);
+    if (!appt) return;
 
-        const start = new Date(updated.startISO);
-        const serviceNames = updated.serviceIds
-          .map((serviceId) => services.find((s) => s.id === serviceId)?.name)
-          .filter(Boolean)
-          .join(", ");
+    const { error } = await supabase
+      .from("appointments")
+      .update({ status: "confirmed" })
+      .eq("id", id);
 
-        sendBookingSMS(
-          updated.customer?.phone || "",
-          serviceNames,
-          updated.date,
-          formatTime(start),
-          settings.locationLine
-        );
+    if (error) {
+      console.error(error);
+      setErrorMsg("Could not confirm the Zelle payment.");
+      return;
+    }
 
-        return updated;
-      })
+    const start = new Date(appt.startISO);
+    const serviceNames = appt.serviceIds
+      .map((serviceId) => services.find((s) => s.id === serviceId)?.name)
+      .filter(Boolean)
+      .join(", ");
+
+    sendBookingSMS(
+      appt.customer?.phone || "",
+      serviceNames,
+      appt.date,
+      formatTime(start),
+      settings.locationLine
     );
+
+    await refreshAppointments();
   }
 
   function exportCSV() {
@@ -723,7 +810,7 @@ export default function App() {
               Clean White Luxury
             </Badge>
             <Badge className="rounded-xl bg-black text-white hover:bg-black">
-              Deposit Required
+              Database Live
             </Badge>
           </div>
         </div>
@@ -755,26 +842,12 @@ export default function App() {
                         </p>
                       </div>
                       <div className="grid gap-2 text-sm text-neutral-700">
-                        <div>
-                          <span className="font-medium">Service:</span> {lastConfirmedServiceNames}
-                        </div>
-                        <div>
-                          <span className="font-medium">Date:</span> {lastConfirmedBooking.date}
-                        </div>
-                        <div>
-                          <span className="font-medium">Time:</span>{" "}
-                          {formatTime(new Date(lastConfirmedBooking.startISO))}
-                        </div>
-                        <div>
-                          <span className="font-medium">Deposit paid:</span> ${REQUIRED_DEPOSIT}
-                        </div>
-                        <div>
-                          <span className="font-medium">Remaining balance at appointment:</span>{" "}
-                          ${Math.max(0, lastConfirmedBooking.totalPrice - REQUIRED_DEPOSIT)}
-                        </div>
-                        <div>
-                          <span className="font-medium">Location:</span> {settings.locationLine}
-                        </div>
+                        <div><span className="font-medium">Service:</span> {lastConfirmedServiceNames}</div>
+                        <div><span className="font-medium">Date:</span> {lastConfirmedBooking.date}</div>
+                        <div><span className="font-medium">Time:</span> {formatTime(new Date(lastConfirmedBooking.startISO))}</div>
+                        <div><span className="font-medium">Deposit paid:</span> ${REQUIRED_DEPOSIT}</div>
+                        <div><span className="font-medium">Remaining balance at appointment:</span> ${Math.max(0, lastConfirmedBooking.totalPrice - REQUIRED_DEPOSIT)}</div>
+                        <div><span className="font-medium">Location:</span> {settings.locationLine}</div>
                       </div>
                     </div>
 
@@ -829,10 +902,6 @@ export default function App() {
                       <div><span className="font-medium">Service:</span> {lastZelleServiceNames}</div>
                       <div><span className="font-medium">Date:</span> {lastZelleBooking.date}</div>
                       <div><span className="font-medium">Time:</span> {formatTime(new Date(lastZelleBooking.startISO))}</div>
-                      <div><span className="font-medium">Memo suggestion:</span> {lastZelleBooking.customer?.name} {lastZelleBooking.date}</div>
-                    </div>
-                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
-                      After you receive the Zelle payment, go to the Admin tab and click <span className="font-medium">Mark Zelle Confirmed</span>.
                     </div>
                   </div>
                 </CardContent>
@@ -879,9 +948,7 @@ export default function App() {
 
                     <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
                       <div className="font-medium">{selectedService.name}</div>
-                      <div className="mt-1 text-sm text-neutral-600">
-                        {selectedService.durationMin} minutes
-                      </div>
+                      <div className="mt-1 text-sm text-neutral-600">{selectedService.durationMin} minutes</div>
                       <div className="mt-2 text-lg font-semibold">${selectedService.price}</div>
                     </div>
 
@@ -970,9 +1037,7 @@ export default function App() {
                                 }`}
                               >
                                 <span>{slot.label}</span>
-                                <span className="text-xs">
-                                  {slot.available ? "Open" : "Unavailable"}
-                                </span>
+                                <span className="text-xs">{slot.available ? "Open" : "Unavailable"}</span>
                               </button>
                             ))}
                           </div>
@@ -995,9 +1060,7 @@ export default function App() {
                       </div>
 
                       <div className="grid gap-2">
-                        <Label htmlFor="phone">
-                          Phone number {settings.requirePhone ? "(required)" : "(optional)"}
-                        </Label>
+                        <Label htmlFor="phone">Phone number {settings.requirePhone ? "(required)" : "(optional)"}</Label>
                         <Input
                           id="phone"
                           value={customerPhone}
@@ -1115,7 +1178,11 @@ export default function App() {
                       </ul>
                     </div>
 
-                    {appointmentsForDay.length === 0 ? (
+                    {loadingBookings ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
+                        Loading appointments...
+                      </div>
+                    ) : appointmentsForDay.length === 0 ? (
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         No appointments yet for {friendlyDate}.
                       </div>
@@ -1143,7 +1210,9 @@ export default function App() {
                                     {formatTime(start)} – {formatTime(end)}
                                   </div>
                                   <div className="mt-1 text-sm text-neutral-600">{svcs}</div>
-                                  <div className="mt-1 text-xs text-neutral-500">{a.status}</div>
+                                  <div className="mt-1 text-xs text-neutral-500">
+                                    {a.status} {a.paymentMethod ? `• ${a.paymentMethod}` : ""}
+                                  </div>
                                 </div>
                                 <div className="text-right">
                                   <div className="font-semibold">${a.totalPrice}</div>
@@ -1230,7 +1299,7 @@ export default function App() {
                             <div className="flex items-center gap-2 font-medium">
                               <Shield className="h-4 w-4" /> Admin unlocked
                             </div>
-                            <div className="mt-1 text-xs text-neutral-600">Manage appointments, payment verification, exports, and completion status.</div>
+                            <div className="mt-1 text-xs text-neutral-600">Bookings now live in Supabase and visible across devices.</div>
                           </div>
                         </div>
 
@@ -1246,6 +1315,14 @@ export default function App() {
                           <Button
                             variant="outline"
                             className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                            onClick={refreshAppointments}
+                          >
+                            Refresh bookings
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
                             onClick={exportCSV}
                           >
                             <Download className="mr-2 h-4 w-4" /> Export CSV
@@ -1254,11 +1331,16 @@ export default function App() {
                           <Button
                             variant="destructive"
                             className="h-11 rounded-2xl"
-                            onClick={() => {
-                              if (confirm("Delete ALL appointments?")) {
-                                setAppointments([]);
-                                clearPendingBooking();
+                            onClick={async () => {
+                              if (!confirm("Delete ALL appointments?")) return;
+                              const { error } = await supabase.from("appointments").delete().neq("id", "");
+                              if (error) {
+                                console.error(error);
+                                setErrorMsg("Could not clear appointments.");
+                                return;
                               }
+                              clearPendingBooking();
+                              await refreshAppointments();
                             }}
                           >
                             <Trash2 className="mr-2 h-4 w-4" /> Clear All
@@ -1320,7 +1402,6 @@ export default function App() {
                         onChange={(e) => setSettings((p) => ({ ...p, adminPin: e.target.value }))}
                         className="border-[#E7DFD6] bg-white"
                       />
-                      <div className="text-xs text-neutral-600">Change this from the default.</div>
                     </div>
                   </CardContent>
                 </Card>
@@ -1336,77 +1417,76 @@ export default function App() {
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         Unlock Admin to view and manage appointments.
                       </div>
+                    ) : loadingBookings ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
+                        Loading appointments...
+                      </div>
                     ) : appointments.length === 0 ? (
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         No appointments yet.
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {appointments
-                          .slice()
-                          .sort((a, b) => a.startISO.localeCompare(b.startISO))
-                          .map((a) => {
-                            const start = new Date(a.startISO);
-                            const svcs = a.serviceIds
-                              .map((id) => services.find((s) => s.id === id)?.name)
-                              .filter(Boolean)
-                              .join(", ");
+                        {appointments.map((a) => {
+                          const start = new Date(a.startISO);
+                          const svcs = a.serviceIds
+                            .map((id) => services.find((s) => s.id === id)?.name)
+                            .filter(Boolean)
+                            .join(", ");
 
-                            return (
-                              <div key={a.id} className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
-                                    <div className="font-semibold">{a.customer?.name}</div>
-                                    <div className="text-sm text-neutral-600">
-                                      {a.date} • {formatTime(start)}
-                                    </div>
-                                    <div className="text-sm text-neutral-600">{svcs}</div>
-                                    {a.customer?.phone ? (
-                                      <div className="text-sm text-neutral-600">Phone: {a.customer.phone}</div>
-                                    ) : null}
-                                    <div className="text-xs text-neutral-500 mt-1">
-                                      {a.status} {a.paymentMethod ? `• ${a.paymentMethod}` : ""}
-                                    </div>
+                          return (
+                            <div key={a.id} className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="font-semibold">{a.customer?.name}</div>
+                                  <div className="text-sm text-neutral-600">
+                                    {a.date} • {formatTime(start)}
                                   </div>
+                                  <div className="text-sm text-neutral-600">{svcs}</div>
+                                  {a.customer?.phone ? (
+                                    <div className="text-sm text-neutral-600">Phone: {a.customer.phone}</div>
+                                  ) : null}
+                                  <div className="text-xs text-neutral-500 mt-1">
+                                    {a.status} {a.paymentMethod ? `• ${a.paymentMethod}` : ""}
+                                  </div>
+                                </div>
 
-                                  <div className="flex flex-col items-end gap-2">
-                                    <div className="font-semibold">${a.totalPrice}</div>
-                                    <div className="flex flex-wrap gap-2 justify-end">
-                                      {a.status === "zelle_pending_verification" ? (
-                                        <Button
-                                          variant="outline"
-                                          className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                                          onClick={() => markZelleConfirmed(a.id)}
-                                        >
-                                          Mark Zelle Confirmed
-                                        </Button>
-                                      ) : null}
-
-                                      {a.status !== "completed" && a.status !== "zelle_pending_verification" ? (
-                                        <Button
-                                          variant="outline"
-                                          className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                                          onClick={() => markCompleted(a.id)}
-                                        >
-                                          Mark completed
-                                        </Button>
-                                      ) : null}
-
+                                <div className="flex flex-col items-end gap-2">
+                                  <div className="font-semibold">${a.totalPrice}</div>
+                                  <div className="flex flex-wrap gap-2 justify-end">
+                                    {a.status === "zelle_pending_verification" ? (
                                       <Button
                                         variant="outline"
                                         className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                                        onClick={() => {
-                                          if (confirm("Cancel this appointment?")) cancelAppt(a.id);
-                                        }}
+                                        onClick={() => markZelleConfirmed(a.id)}
                                       >
-                                        Cancel
+                                        Mark Zelle Confirmed
                                       </Button>
-                                    </div>
+                                    ) : null}
+
+                                    {a.status !== "completed" && a.status !== "zelle_pending_verification" ? (
+                                      <Button
+                                        variant="outline"
+                                        className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                        onClick={() => markCompleted(a.id)}
+                                      >
+                                        Mark completed
+                                      </Button>
+                                    ) : null}
+
+                                    <Button
+                                      variant="outline"
+                                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                      onClick={() => cancelAppt(a.id)}
+                                    >
+                                      Cancel
+                                    </Button>
                                   </div>
                                 </div>
                               </div>
-                            );
-                          })}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </CardContent>
@@ -1420,15 +1500,15 @@ export default function App() {
       <footer className="mx-auto max-w-6xl px-4 pb-10">
         <div className="mt-6 rounded-2xl border border-[#E7DFD6] bg-white p-5 text-sm text-neutral-700">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="font-medium">Dual payment booking flow</div>
+            <div className="font-medium">Database-backed booking system</div>
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Stripe + Zelle
+              Supabase Live
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
-            <li>Stripe confirms automatically after online payment</li>
-            <li>Zelle requests are saved pending verification</li>
-            <li>Admin can manually confirm Zelle appointments after payment is received</li>
+            <li>Bookings are now shared across devices</li>
+            <li>Zelle and card deposits both save to the same database</li>
+            <li>Admin actions update live records instead of browser-only storage</li>
           </ul>
         </div>
       </footer>
