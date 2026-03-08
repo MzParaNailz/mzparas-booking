@@ -15,6 +15,7 @@ import {
   Sparkles,
   CalendarPlus,
   BadgeDollarSign,
+  ChevronDown,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const LS_KEY = "mzparas_lux_booking_v7";
+const LS_KEY = "mzparas_lux_booking_v8";
 const PENDING_KEY = "mzparas_pending_booking_v2";
 const REQUIRED_DEPOSIT = 50;
 
@@ -233,6 +234,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()));
   const [selectedServiceId, setSelectedServiceId] = useState(() => DEFAULT_SERVICES[0].id);
   const [selectedTimeISO, setSelectedTimeISO] = useState(null);
+  const [timeMenuOpen, setTimeMenuOpen] = useState(false);
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -253,6 +255,7 @@ export default function App() {
 
   useEffect(() => {
     setSelectedTimeISO(null);
+    setTimeMenuOpen(false);
     setErrorMsg("");
     setSuccessMsg("");
   }, [selectedDate, selectedServiceId]);
@@ -408,6 +411,55 @@ export default function App() {
 
     return results;
   }, [appointments, hoursForDay, selectedDate, settings.bufferMin, settings.slotStepMin, todayISO, totalDuration]);
+
+  const allTimeOptions = useMemo(() => {
+    if (hoursForDay.closed) return [];
+
+    const [openH, openM] = hoursForDay.open.split(":").map(Number);
+    const [closeH, closeM] = hoursForDay.close.split(":").map(Number);
+
+    const day = parseISODate(selectedDate);
+    const open = new Date(day.getFullYear(), day.getMonth(), day.getDate(), openH, openM, 0, 0);
+    const close = new Date(day.getFullYear(), day.getMonth(), day.getDate(), closeH, closeM, 0, 0);
+
+    const step = clamp(settings.slotStepMin, 5, 60);
+    const buffer = clamp(settings.bufferMin, 0, 60);
+    const needed = totalDuration + buffer;
+
+    const dayAppts = appointments
+      .filter((a) => a.date === selectedDate && a.status === "confirmed")
+      .map((a) => ({ start: new Date(a.startISO), end: new Date(a.endISO) }));
+
+    const results = [];
+    for (let t = new Date(open); t <= close; t = addMinutes(t, step)) {
+      const end = addMinutes(t, needed);
+      if (end > close) continue;
+
+      let available = true;
+
+      if (selectedDate === todayISO) {
+        const grace = addMinutes(new Date(), 10);
+        if (t < grace) available = false;
+      }
+
+      const conflict = dayAppts.some((a) => overlaps(t, end, a.start, a.end));
+      if (conflict) available = false;
+
+      results.push({
+        iso: t.toISOString(),
+        label: formatTime(t),
+        available,
+      });
+    }
+
+    return results;
+  }, [appointments, hoursForDay, selectedDate, settings.bufferMin, settings.slotStepMin, todayISO, totalDuration]);
+
+  const selectedTimeLabel = useMemo(() => {
+    if (!selectedTimeISO) return "";
+    const found = allTimeOptions.find((t) => t.iso === selectedTimeISO);
+    return found ? found.label : formatTime(new Date(selectedTimeISO));
+  }, [selectedTimeISO, allTimeOptions]);
 
   const appointmentsForDay = useMemo(() => {
     return appointments
@@ -777,30 +829,50 @@ export default function App() {
                     <CardTitle className="text-base">Reserve your time</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {slots.length === 0 ? (
+                    {allTimeOptions.length === 0 ? (
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
-                        No available slots for this day. Try another date.
+                        No time slots available for this day. Try another date.
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {slots.map((s) => {
-                          const iso = s.start.toISOString();
-                          const active = selectedTimeISO === iso;
-                          return (
-                            <Button
-                              key={iso}
-                              variant={active ? "default" : "outline"}
-                              className={`h-11 rounded-2xl ${
-                                active
-                                  ? "bg-black text-white hover:bg-neutral-900"
-                                  : "border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                              }`}
-                              onClick={() => setSelectedTimeISO(iso)}
-                            >
-                              {formatTime(s.start)}
-                            </Button>
-                          );
-                        })}
+                      <div className="relative">
+                        <Label className="mb-2 block">Available time menu</Label>
+                        <button
+                          type="button"
+                          onClick={() => setTimeMenuOpen((prev) => !prev)}
+                          className="flex h-11 w-full items-center justify-between rounded-2xl border border-[#E7DFD6] bg-white px-4 text-left text-sm shadow-sm transition hover:bg-[#F8F3ED]"
+                        >
+                          <span className={selectedTimeLabel ? "text-neutral-900" : "text-neutral-500"}>
+                            {selectedTimeLabel || "Choose a time slot"}
+                          </span>
+                          <ChevronDown className={`h-4 w-4 transition ${timeMenuOpen ? "rotate-180" : ""}`} />
+                        </button>
+
+                        {timeMenuOpen ? (
+                          <div className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-2xl border border-[#E7DFD6] bg-white p-2 shadow-lg">
+                            {allTimeOptions.map((slot) => (
+                              <button
+                                key={slot.iso}
+                                type="button"
+                                disabled={!slot.available}
+                                onClick={() => {
+                                  if (!slot.available) return;
+                                  setSelectedTimeISO(slot.iso);
+                                  setTimeMenuOpen(false);
+                                }}
+                                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+                                  slot.available
+                                    ? "text-neutral-900 hover:bg-[#EFE7DD]"
+                                    : "cursor-not-allowed text-neutral-400 line-through decoration-neutral-300 decoration-1"
+                                }`}
+                              >
+                                <span>{slot.label}</span>
+                                <span className="text-xs">
+                                  {slot.available ? "Open" : "Unavailable"}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     )}
 
