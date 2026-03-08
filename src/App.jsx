@@ -486,11 +486,11 @@ export default function App() {
   }, [hoursForDay]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white to-neutral-50 text-neutral-900">
-      <header className="sticky top-0 z-20 border-b bg-white/85 backdrop-blur">
+    <div className="min-h-screen bg-[#F5F0E9] text-neutral-900">
+      <header className="sticky top-0 z-20 border-b border-[#E7DFD6] bg-[#F5F0E9]/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-2xl border bg-white shadow-sm">
+            <div className="grid h-11 w-11 place-items-center rounded-2xl border border-[#E7DFD6] bg-white shadow-sm">
               <CalendarDays className="h-5 w-5" />
             </div>
             <div>
@@ -511,17 +511,19 @@ export default function App() {
           </div>
 
           <div className="hidden items-center gap-2 sm:flex">
-            <Badge variant="secondary" className="rounded-xl">
+            <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
               Clean White Luxury
             </Badge>
-            <Badge className="rounded-xl">Deposit Required</Badge>
+            <Badge className="rounded-xl bg-black text-white hover:bg-black">
+              Deposit Required
+            </Badge>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         <Tabs defaultValue="book" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:w-[420px]">
+          <TabsList className="grid w-full grid-cols-2 bg-white border border-[#E7DFD6] sm:w-[420px]">
             <TabsTrigger value="book">Book</TabsTrigger>
             <TabsTrigger value="admin">Admin</TabsTrigger>
           </TabsList>
@@ -529,7 +531,7 @@ export default function App() {
           <TabsContent value="book" className="mt-6">
             <div className="grid gap-6 lg:grid-cols-3">
               <div className="lg:col-span-1">
-                <Card className="rounded-2xl shadow-sm">
+                <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base">Choose services</CardTitle>
                   </CardHeader>
@@ -544,8 +546,8 @@ export default function App() {
                             onClick={() => toggleService(s.id)}
                             className={`flex w-full items-center justify-between rounded-2xl border bg-white px-4 py-3 text-left transition focus:outline-none ${
                               checked
-                                ? "border-neutral-900 ring-1 ring-neutral-300"
-                                : "border-neutral-200 hover:bg-neutral-50"
+                                ? "border-black ring-1 ring-[#D8CDBF]"
+                                : "border-[#E7DFD6] hover:bg-[#EFE7DD]"
                             }`}
                           >
                             <div>
@@ -563,7 +565,7 @@ export default function App() {
                       })}
                     </div>
 
-                    <Separator />
+                    <Separator className="bg-[#E7DFD6]" />
 
                     <div className="grid gap-2">
                       <Label htmlFor="date">Select date</Label>
@@ -572,11 +574,12 @@ export default function App() {
                         type="date"
                         value={selectedDate}
                         onChange={(e) => setSelectedDate(e.target.value)}
+                        className="border-[#E7DFD6] bg-white"
                       />
                       <div className="text-sm text-neutral-600">{friendlyDate}</div>
                     </div>
 
-                    <div className="rounded-2xl border bg-white p-4">
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
                       <div className="flex items-center justify-between">
                         <div className="text-sm text-neutral-600">Estimated total</div>
                         <div className="text-lg font-semibold">${totalPrice}</div>
@@ -590,13 +593,13 @@ export default function App() {
                     </div>
 
                     {errorMsg ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800">
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-3 text-sm text-neutral-800">
                         {errorMsg}
                       </div>
                     ) : null}
 
                     {successMsg ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800">
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-3 text-sm text-neutral-800">
                         {successMsg}
                       </div>
                     ) : null}
@@ -605,13 +608,13 @@ export default function App() {
               </div>
 
               <div className="lg:col-span-1">
-                <Card className="rounded-2xl shadow-sm">
+                <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base">Pick a time</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {slots.length === 0 ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-700">
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         No available slots for this day. Try another date.
                       </div>
                     ) : (
@@ -623,7 +626,11 @@ export default function App() {
                             <Button
                               key={iso}
                               variant={active ? "default" : "outline"}
-                              className={`h-11 rounded-2xl ${active ? "" : "border-neutral-200"}`}
+                              className={`h-11 rounded-2xl ${
+                                active
+                                  ? "bg-black text-white hover:bg-neutral-900"
+                                  : "border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                              }`}
                               onClick={() => setSelectedTimeISO(iso)}
                             >
                               {formatTime(s.start)}
@@ -633,7 +640,7 @@ export default function App() {
                       </div>
                     )}
 
-                    <Separator />
+                    <Separator className="bg-[#E7DFD6]" />
 
                     <div className="space-y-3">
                       <div className="grid gap-2">
@@ -643,6 +650,7 @@ export default function App() {
                           value={customerName}
                           onChange={(e) => setCustomerName(e.target.value)}
                           placeholder="e.g., Jasmine"
+                          className="border-[#E7DFD6] bg-white"
                         />
                       </div>
 
@@ -655,6 +663,7 @@ export default function App() {
                           value={customerPhone}
                           onChange={(e) => setCustomerPhone(e.target.value)}
                           placeholder="e.g., 404-642-9408"
+                          className="border-[#E7DFD6] bg-white"
                         />
                       </div>
 
@@ -665,10 +674,14 @@ export default function App() {
                           value={customerNotes}
                           onChange={(e) => setCustomerNotes(e.target.value)}
                           placeholder="Design idea, preferred shape/length, etc."
+                          className="border-[#E7DFD6] bg-white"
                         />
                       </div>
 
-                      <Button className="h-12 w-full rounded-2xl" onClick={bookWithDeposit}>
+                      <Button
+                        className="h-12 w-full rounded-2xl bg-black text-white hover:bg-neutral-900"
+                        onClick={bookWithDeposit}
+                      >
                         Pay $50 Deposit
                       </Button>
 
@@ -681,12 +694,12 @@ export default function App() {
               </div>
 
               <div className="lg:col-span-1">
-                <Card className="rounded-2xl shadow-sm">
+                <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base">Deposit summary</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="rounded-2xl border bg-white p-4">
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-neutral-600">Service total</span>
                         <span className="font-semibold">${totalPrice}</span>
@@ -697,18 +710,18 @@ export default function App() {
                         </span>
                         <span className="text-lg font-semibold">${REQUIRED_DEPOSIT}</span>
                       </div>
-                      <div className="mt-3 flex items-center justify-between border-t pt-3">
+                      <div className="mt-3 flex items-center justify-between border-t border-[#E7DFD6] pt-3">
                         <span className="text-sm text-neutral-600">Remaining at appointment</span>
                         <span className="font-semibold">${remainingBalance}</span>
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700">
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
                       Your time slot is only held after Stripe payment succeeds.
                     </div>
 
                     {appointmentsForDay.length === 0 ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-700">
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         No confirmed appointments yet for {friendlyDate}.
                       </div>
                     ) : (
@@ -726,7 +739,7 @@ export default function App() {
                               key={a.id}
                               initial={{ opacity: 0, y: 6 }}
                               animate={{ opacity: 1, y: 0 }}
-                              className="rounded-2xl border border-neutral-200 bg-white p-4"
+                              className="rounded-2xl border border-[#E7DFD6] bg-white p-4"
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div>
@@ -756,14 +769,14 @@ export default function App() {
           <TabsContent value="admin" className="mt-6">
             <div className="grid gap-6 lg:grid-cols-3">
               <div className="lg:col-span-1">
-                <Card className="rounded-2xl shadow-sm">
+                <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base">Admin access</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {!adminAuthed ? (
                       <>
-                        <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700">
+                        <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
                           <div className="flex items-center gap-2 font-medium">
                             <Lock className="h-4 w-4" /> Enter PIN to manage appointments
                           </div>
@@ -778,11 +791,12 @@ export default function App() {
                             value={pinInput}
                             onChange={(e) => setPinInput(e.target.value)}
                             placeholder="••••"
+                            className="border-[#E7DFD6] bg-white"
                           />
                         </div>
 
                         <Button
-                          className="h-11 rounded-2xl"
+                          className="h-11 rounded-2xl bg-black text-white hover:bg-neutral-900"
                           onClick={() => {
                             if (pinInput === settings.adminPin) {
                               setAdminAuthed(true);
@@ -797,7 +811,7 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700">
+                        <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
                           <div className="flex items-center gap-2 font-medium">
                             <Shield className="h-4 w-4" /> Admin unlocked
                           </div>
@@ -807,7 +821,7 @@ export default function App() {
                         <div className="grid gap-2">
                           <Button
                             variant="outline"
-                            className="h-11 rounded-2xl border-neutral-200"
+                            className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
                             onClick={() => setAdminAuthed(false)}
                           >
                             Lock Admin
@@ -815,7 +829,7 @@ export default function App() {
 
                           <Button
                             variant="outline"
-                            className="h-11 rounded-2xl border-neutral-200"
+                            className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
                             onClick={exportCSV}
                           >
                             <Download className="mr-2 h-4 w-4" /> Export CSV
@@ -839,7 +853,7 @@ export default function App() {
                   </CardContent>
                 </Card>
 
-                <Card className="mt-6 rounded-2xl shadow-sm">
+                <Card className="mt-6 rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base">Settings</CardTitle>
                   </CardHeader>
@@ -849,6 +863,7 @@ export default function App() {
                       <Input
                         value={settings.salonName}
                         onChange={(e) => setSettings((p) => ({ ...p, salonName: e.target.value }))}
+                        className="border-[#E7DFD6] bg-white"
                       />
                     </div>
 
@@ -857,6 +872,7 @@ export default function App() {
                       <Input
                         value={settings.locationLine}
                         onChange={(e) => setSettings((p) => ({ ...p, locationLine: e.target.value }))}
+                        className="border-[#E7DFD6] bg-white"
                       />
                     </div>
 
@@ -865,6 +881,7 @@ export default function App() {
                       <Input
                         value={settings.phone}
                         onChange={(e) => setSettings((p) => ({ ...p, phone: e.target.value }))}
+                        className="border-[#E7DFD6] bg-white"
                       />
                     </div>
 
@@ -873,10 +890,11 @@ export default function App() {
                       <Input
                         value={settings.instagram}
                         onChange={(e) => setSettings((p) => ({ ...p, instagram: e.target.value }))}
+                        className="border-[#E7DFD6] bg-white"
                       />
                     </div>
 
-                    <Separator />
+                    <Separator className="bg-[#E7DFD6]" />
 
                     <div className="grid gap-2">
                       <Label>Admin PIN</Label>
@@ -884,6 +902,7 @@ export default function App() {
                         type="password"
                         value={settings.adminPin}
                         onChange={(e) => setSettings((p) => ({ ...p, adminPin: e.target.value }))}
+                        className="border-[#E7DFD6] bg-white"
                       />
                       <div className="text-xs text-neutral-600">Change this from the default.</div>
                     </div>
@@ -892,17 +911,17 @@ export default function App() {
               </div>
 
               <div className="lg:col-span-2">
-                <Card className="rounded-2xl shadow-sm">
+                <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base">Confirmed appointments</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {!adminAuthed ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-700">
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         Unlock Admin to view and manage appointments.
                       </div>
                     ) : appointments.length === 0 ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-700">
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         No confirmed appointments yet.
                       </div>
                     ) : (
@@ -918,7 +937,7 @@ export default function App() {
                               .join(", ");
 
                             return (
-                              <div key={a.id} className="rounded-2xl border border-neutral-200 bg-white p-4">
+                              <div key={a.id} className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
                                     <div className="font-semibold">{a.customer?.name}</div>
@@ -936,7 +955,7 @@ export default function App() {
                                     <div className="font-semibold">${a.totalPrice}</div>
                                     <Button
                                       variant="outline"
-                                      className="rounded-2xl border-neutral-200"
+                                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
                                       onClick={() => {
                                         if (confirm("Cancel this appointment?")) cancelAppt(a.id);
                                       }}
@@ -959,10 +978,10 @@ export default function App() {
       </main>
 
       <footer className="mx-auto max-w-6xl px-4 pb-10">
-        <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5 text-sm text-neutral-700">
+        <div className="mt-6 rounded-2xl border border-[#E7DFD6] bg-white p-5 text-sm text-neutral-700">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="font-medium">Confirmed only after payment</div>
-            <Badge variant="secondary" className="rounded-xl">
+            <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
               $50 Deposit Required
             </Badge>
           </div>
