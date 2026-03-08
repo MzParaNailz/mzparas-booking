@@ -25,8 +25,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const LS_KEY = "mzparas_lux_booking_v6";
+const LS_KEY = "mzparas_lux_booking_v7";
 const PENDING_KEY = "mzparas_pending_booking_v2";
 const REQUIRED_DEPOSIT = 50;
 
@@ -230,7 +231,7 @@ export default function App() {
   const [appointments, setAppointments] = useState(localLoaded?.appointments ?? []);
 
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()));
-  const [selectedServiceIds, setSelectedServiceIds] = useState(() => [DEFAULT_SERVICES[0].id]);
+  const [selectedServiceId, setSelectedServiceId] = useState(() => DEFAULT_SERVICES[0].id);
   const [selectedTimeISO, setSelectedTimeISO] = useState(null);
 
   const [customerName, setCustomerName] = useState("");
@@ -254,7 +255,7 @@ export default function App() {
     setSelectedTimeISO(null);
     setErrorMsg("");
     setSuccessMsg("");
-  }, [selectedDate, selectedServiceIds.join("|")]);
+  }, [selectedDate, selectedServiceId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -311,8 +312,8 @@ export default function App() {
   }, [services, settings.locationLine]);
 
   const selectedServices = useMemo(
-    () => services.filter((s) => selectedServiceIds.includes(s.id)),
-    [services, selectedServiceIds]
+    () => services.filter((s) => s.id === selectedServiceId),
+    [services, selectedServiceId]
   );
 
   const totalDuration = useMemo(
@@ -365,16 +366,10 @@ export default function App() {
     return todayAppointments.reduce((sum, a) => sum + (a.totalPrice || 0), 0);
   }, [todayAppointments]);
 
-  function toggleService(id) {
-    setSelectedServiceIds((prev) => {
-      const has = prev.includes(id);
-      if (has) {
-        const next = prev.filter((x) => x !== id);
-        return next.length ? next : prev;
-      }
-      return [...prev, id];
-    });
-  }
+  const selectedService = useMemo(
+    () => services.find((s) => s.id === selectedServiceId) || services[0],
+    [services, selectedServiceId]
+  );
 
   const slots = useMemo(() => {
     if (hoursForDay.closed) return [];
@@ -421,7 +416,7 @@ export default function App() {
   }, [appointments, selectedDate]);
 
   function validate() {
-    if (!selectedServices.length) return "Please select at least one service.";
+    if (!selectedServiceId) return "Please select a service.";
     if (!selectedTimeISO) return "Please pick a time.";
     if (!customerName.trim()) return "Please enter your name.";
     if (settings.requirePhone && !customerPhone.trim()) return "Please enter your phone number.";
@@ -489,7 +484,7 @@ export default function App() {
       date: selectedDate,
       startISO: start.toISOString(),
       endISO: end.toISOString(),
-      serviceIds: selectedServiceIds,
+      serviceIds: [selectedServiceId],
       totalDurationMin: totalDuration,
       totalPrice,
       customer: {
@@ -707,36 +702,31 @@ export default function App() {
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">Select your services</CardTitle>
+                    <CardTitle className="text-base">Select your service</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="grid gap-2">
-                      {services.map((s) => {
-                        const checked = selectedServiceIds.includes(s.id);
-                        return (
-                          <button
-                            type="button"
-                            key={s.id}
-                            onClick={() => toggleService(s.id)}
-                            className={`flex w-full items-center justify-between rounded-2xl border bg-white px-4 py-3 text-left transition focus:outline-none ${
-                              checked
-                                ? "border-black ring-1 ring-[#D8CDBF]"
-                                : "border-[#E7DFD6] hover:bg-[#EFE7DD]"
-                            }`}
-                          >
-                            <div>
-                              <div className="font-medium">{s.name}</div>
-                              <div className="text-sm text-neutral-600">{s.durationMin} min</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-semibold">${s.price}</div>
-                              <div className={`text-xs ${checked ? "text-neutral-900" : "text-neutral-500"}`}>
-                                {checked ? "Selected" : "Tap to add"}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
+                      <Label>Service menu</Label>
+                      <Select value={selectedServiceId} onValueChange={setSelectedServiceId}>
+                        <SelectTrigger className="border-[#E7DFD6] bg-white">
+                          <SelectValue placeholder="Choose a service" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {services.map((service) => (
+                            <SelectItem key={service.id} value={service.id}>
+                              {service.name} — {service.durationMin} min — ${service.price}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
+                      <div className="font-medium">{selectedService.name}</div>
+                      <div className="mt-1 text-sm text-neutral-600">
+                        {selectedService.durationMin} minutes
+                      </div>
+                      <div className="mt-2 text-lg font-semibold">${selectedService.price}</div>
                     </div>
 
                     <Separator className="bg-[#E7DFD6]" />
