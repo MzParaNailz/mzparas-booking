@@ -16,6 +16,7 @@ import {
   CalendarPlus,
   BadgeDollarSign,
   ChevronDown,
+  Landmark,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,9 +29,10 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const LS_KEY = "mzparas_lux_booking_v8";
-const PENDING_KEY = "mzparas_pending_booking_v2";
+const LS_KEY = "mzparas_lux_booking_v9";
+const PENDING_KEY = "mzparas_pending_booking_v3";
 const REQUIRED_DEPOSIT = 50;
+const ZELLE_RECIPIENT = "516-451-4570";
 
 const DEFAULT_SERVICES = [
   { id: "svc-acrylic-full", name: "Full Set Acrylic", durationMin: 90, price: 65 },
@@ -235,6 +237,7 @@ export default function App() {
   const [selectedServiceId, setSelectedServiceId] = useState(() => DEFAULT_SERVICES[0].id);
   const [selectedTimeISO, setSelectedTimeISO] = useState(null);
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("stripe");
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -243,6 +246,7 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [lastConfirmedBooking, setLastConfirmedBooking] = useState(null);
+  const [lastZelleBooking, setLastZelleBooking] = useState(null);
 
   const [adminAuthed, setAdminAuthed] = useState(false);
   const [pinInput, setPinInput] = useState("");
@@ -293,6 +297,7 @@ export default function App() {
         );
 
         setLastConfirmedBooking(confirmedBooking);
+        setLastZelleBooking(null);
         clearPendingBooking();
         setSuccessMsg("Deposit paid successfully. Your appointment is confirmed.");
         setCustomerName("");
@@ -352,17 +357,17 @@ export default function App() {
   }, [selectedDate]);
 
   const todayAppointments = useMemo(() => {
-    return appointments.filter((a) => a.date === todayISO && a.status === "confirmed");
+    return appointments.filter((a) => a.date === todayISO && (a.status === "confirmed" || a.status === "completed"));
   }, [appointments, todayISO]);
 
   const upcomingAppointments = useMemo(() => {
     return appointments
-      .filter((a) => new Date(a.startISO) >= new Date() && a.status === "confirmed")
+      .filter((a) => new Date(a.startISO) >= new Date())
       .sort((a, b) => a.startISO.localeCompare(b.startISO));
   }, [appointments]);
 
   const confirmedDepositsCollected = useMemo(() => {
-    return appointments.filter((a) => a.status === "confirmed").length * REQUIRED_DEPOSIT;
+    return appointments.filter((a) => a.status === "confirmed" || a.status === "completed").length * REQUIRED_DEPOSIT;
   }, [appointments]);
 
   const todayRevenue = useMemo(() => {
@@ -389,7 +394,10 @@ export default function App() {
     const needed = totalDuration + buffer;
 
     const dayAppts = appointments
-      .filter((a) => a.date === selectedDate && a.status === "confirmed")
+      .filter((a) =>
+        a.date === selectedDate &&
+        (a.status === "confirmed" || a.status === "completed" || a.status === "zelle_pending_verification")
+      )
       .map((a) => ({ start: new Date(a.startISO), end: new Date(a.endISO) }));
 
     const results = [];
@@ -425,7 +433,10 @@ export default function App() {
 
   const appointmentsForDay = useMemo(() => {
     return appointments
-      .filter((a) => a.date === selectedDate && a.status === "confirmed")
+      .filter((a) =>
+        a.date === selectedDate &&
+        (a.status === "confirmed" || a.status === "completed" || a.status === "zelle_pending_verification")
+      )
       .sort((a, b) => a.startISO.localeCompare(b.startISO));
   }, [appointments, selectedDate]);
 
@@ -472,7 +483,7 @@ export default function App() {
     }
   }
 
-  async function bookWithDeposit() {
+  async function bookWithStripe() {
     setSuccessMsg("");
     const err = validate();
     if (err) {
@@ -484,7 +495,10 @@ export default function App() {
     const end = addMinutes(start, totalDuration + clamp(settings.bufferMin, 0, 60));
 
     const conflict = appointments
-      .filter((a) => a.date === selectedDate && a.status === "confirmed")
+      .filter((a) =>
+        a.date === selectedDate &&
+        (a.status === "confirmed" || a.status === "completed" || a.status === "zelle_pending_verification")
+      )
       .some((a) => overlaps(start, end, new Date(a.startISO), new Date(a.endISO)));
 
     if (conflict) {
@@ -507,10 +521,70 @@ export default function App() {
         notes: customerNotes.trim(),
       },
       status: "pending_payment",
+      paymentMethod: "stripe",
     };
 
     savePendingBooking(pendingAppt);
     await startDepositCheckout();
+  }
+
+  function bookWithZelle() {
+    setSuccessMsg("");
+    const err = validate();
+    if (err) {
+      setErrorMsg(err);
+      return;
+    }
+
+    const start = new Date(selectedTimeISO);
+    const end = addMinutes(start, totalDuration + clamp(settings.bufferMin, 0, 60));
+
+    const conflict = appointments
+      .filter((a) =>
+        a.date === selectedDate &&
+        (a.status === "confirmed" || a.status === "completed" || a.status === "zelle_pending_verification")
+      )
+      .some((a) => overlaps(start, end, new Date(a.startISO), new Date(a.endISO)));
+
+    if (conflict) {
+      setErrorMsg("That time was just booked. Please choose another slot.");
+      return;
+    }
+
+    const zelleBooking = {
+      id: uid(),
+      createdAtISO: new Date().toISOString(),
+      date: selectedDate,
+      startISO: start.toISOString(),
+      endISO: end.toISOString(),
+      serviceIds: [selectedServiceId],
+      totalDurationMin: totalDuration,
+      totalPrice,
+      customer: {
+        name: customerName.trim(),
+        phone: customerPhone.trim(),
+        notes: customerNotes.trim(),
+      },
+      status: "zelle_pending_verification",
+      paymentMethod: "zelle",
+    };
+
+    setAppointments((prev) => [...prev, zelleBooking].sort((a, b) => a.startISO.localeCompare(b.startISO)));
+    setLastZelleBooking(zelleBooking);
+    setLastConfirmedBooking(null);
+    setSuccessMsg("Zelle reservation request submitted. Your appointment will be confirmed after payment verification.");
+    setCustomerName("");
+    setCustomerPhone("");
+    setCustomerNotes("");
+    setSelectedTimeISO(null);
+  }
+
+  function handleReserve() {
+    if (paymentMethod === "zelle") {
+      bookWithZelle();
+      return;
+    }
+    bookWithStripe();
   }
 
   function cancelAppt(id) {
@@ -520,6 +594,31 @@ export default function App() {
   function markCompleted(id) {
     setAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, status: "completed" } : a))
+    );
+  }
+
+  function markZelleConfirmed(id) {
+    setAppointments((prev) =>
+      prev.map((a) => {
+        if (a.id !== id) return a;
+        const updated = { ...a, status: "confirmed" };
+
+        const start = new Date(updated.startISO);
+        const serviceNames = updated.serviceIds
+          .map((serviceId) => services.find((s) => s.id === serviceId)?.name)
+          .filter(Boolean)
+          .join(", ");
+
+        sendBookingSMS(
+          updated.customer?.phone || "",
+          serviceNames,
+          updated.date,
+          formatTime(start),
+          settings.locationLine
+        );
+
+        return updated;
+      })
     );
   }
 
@@ -537,6 +636,7 @@ export default function App() {
       "totalPrice",
       "notes",
       "status",
+      "paymentMethod",
     ];
 
     const rows = appointments
@@ -561,6 +661,7 @@ export default function App() {
           a.totalPrice,
           String(a.customer?.notes ?? "").split("\n").join(" "),
           a.status,
+          a.paymentMethod ?? "",
         ];
       });
 
@@ -583,6 +684,14 @@ export default function App() {
       .filter(Boolean)
       .join(", ");
   }, [lastConfirmedBooking, services]);
+
+  const lastZelleServiceNames = useMemo(() => {
+    if (!lastZelleBooking) return "";
+    return lastZelleBooking.serviceIds
+      .map((id) => services.find((s) => s.id === id)?.name)
+      .filter(Boolean)
+      .join(", ");
+  }, [lastZelleBooking, services]);
 
   return (
     <div className="min-h-screen bg-[#F5F0E9] text-neutral-900">
@@ -691,6 +800,39 @@ export default function App() {
                       >
                         Close
                       </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {lastZelleBooking ? (
+              <Card className="mb-6 rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-[#F8F3ED] px-3 py-1 text-sm text-neutral-800">
+                      <Landmark className="h-4 w-4" />
+                      Zelle payment selected
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-semibold tracking-tight">
+                        Send your $50 deposit with Zelle
+                      </h2>
+                      <p className="mt-1 text-sm text-neutral-600">
+                        Your appointment is pending verification until the Zelle deposit is received.
+                      </p>
+                    </div>
+                    <div className="grid gap-2 text-sm text-neutral-700">
+                      <div><span className="font-medium">Send to:</span> {ZELLE_RECIPIENT}</div>
+                      <div><span className="font-medium">Amount:</span> ${REQUIRED_DEPOSIT}</div>
+                      <div><span className="font-medium">Client name:</span> {lastZelleBooking.customer?.name}</div>
+                      <div><span className="font-medium">Service:</span> {lastZelleServiceNames}</div>
+                      <div><span className="font-medium">Date:</span> {lastZelleBooking.date}</div>
+                      <div><span className="font-medium">Time:</span> {formatTime(new Date(lastZelleBooking.startISO))}</div>
+                      <div><span className="font-medium">Memo suggestion:</span> {lastZelleBooking.customer?.name} {lastZelleBooking.date}</div>
+                    </div>
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
+                      After you receive the Zelle payment, go to the Admin tab and click <span className="font-medium">Mark Zelle Confirmed</span>.
                     </div>
                   </div>
                 </CardContent>
@@ -876,15 +1018,50 @@ export default function App() {
                         />
                       </div>
 
+                      <div className="grid gap-2">
+                        <Label>Payment method</Label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPaymentMethod("stripe")}
+                            className={`rounded-2xl border px-4 py-3 text-left transition ${
+                              paymentMethod === "stripe"
+                                ? "border-black bg-white ring-1 ring-[#D8CDBF]"
+                                : "border-[#E7DFD6] bg-white hover:bg-[#EFE7DD]"
+                            }`}
+                          >
+                            <div className="font-medium">Card deposit</div>
+                            <div className="mt-1 text-xs text-neutral-600">Pay online now</div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPaymentMethod("zelle")}
+                            className={`rounded-2xl border px-4 py-3 text-left transition ${
+                              paymentMethod === "zelle"
+                                ? "border-black bg-white ring-1 ring-[#D8CDBF]"
+                                : "border-[#E7DFD6] bg-white hover:bg-[#EFE7DD]"
+                            }`}
+                          >
+                            <div className="font-medium">Zelle</div>
+                            <div className="mt-1 text-xs text-neutral-600">Manual verification</div>
+                          </button>
+                        </div>
+                      </div>
+
                       <Button
                         className="h-12 w-full rounded-2xl bg-black text-white hover:bg-neutral-900"
-                        onClick={bookWithDeposit}
+                        onClick={handleReserve}
                       >
-                        Secure appointment with $50 deposit
+                        {paymentMethod === "zelle"
+                          ? "Submit Zelle reservation request"
+                          : "Secure appointment with $50 deposit"}
                       </Button>
 
                       <div className="text-xs text-neutral-500">
-                        Appointment is confirmed only after successful deposit payment.
+                        {paymentMethod === "zelle"
+                          ? "Zelle reservations are confirmed after payment verification."
+                          : "Appointment is confirmed only after successful deposit payment."}
                       </div>
                     </div>
                   </CardContent>
@@ -894,7 +1071,7 @@ export default function App() {
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">Deposit & policy</CardTitle>
+                    <CardTitle className="text-base">Payment & policy</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
@@ -914,9 +1091,15 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
-                      Your time slot is only held after deposit payment succeeds.
-                    </div>
+                    {paymentMethod === "zelle" ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
+                        Send your Zelle deposit to <span className="font-medium">{ZELLE_RECIPIENT}</span>. Your appointment will be confirmed after payment verification.
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
+                        Your time slot is only held after deposit payment succeeds.
+                      </div>
+                    )}
 
                     <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
                       <div className="mb-3 flex items-center gap-2 font-medium">
@@ -934,7 +1117,7 @@ export default function App() {
 
                     {appointmentsForDay.length === 0 ? (
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
-                        No confirmed appointments yet for {friendlyDate}.
+                        No appointments yet for {friendlyDate}.
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -1047,7 +1230,7 @@ export default function App() {
                             <div className="flex items-center gap-2 font-medium">
                               <Shield className="h-4 w-4" /> Admin unlocked
                             </div>
-                            <div className="mt-1 text-xs text-neutral-600">Manage appointments, exports, and completion status.</div>
+                            <div className="mt-1 text-xs text-neutral-600">Manage appointments, payment verification, exports, and completion status.</div>
                           </div>
                         </div>
 
@@ -1146,7 +1329,7 @@ export default function App() {
               <div className="lg:col-span-2">
                 <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">Confirmed appointments</CardTitle>
+                    <CardTitle className="text-base">Appointments</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {!adminAuthed ? (
@@ -1155,7 +1338,7 @@ export default function App() {
                       </div>
                     ) : appointments.length === 0 ? (
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
-                        No confirmed appointments yet.
+                        No appointments yet.
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -1181,13 +1364,25 @@ export default function App() {
                                     {a.customer?.phone ? (
                                       <div className="text-sm text-neutral-600">Phone: {a.customer.phone}</div>
                                     ) : null}
-                                    <div className="text-xs text-neutral-500 mt-1">{a.status}</div>
+                                    <div className="text-xs text-neutral-500 mt-1">
+                                      {a.status} {a.paymentMethod ? `• ${a.paymentMethod}` : ""}
+                                    </div>
                                   </div>
 
                                   <div className="flex flex-col items-end gap-2">
                                     <div className="font-semibold">${a.totalPrice}</div>
                                     <div className="flex flex-wrap gap-2 justify-end">
-                                      {a.status !== "completed" ? (
+                                      {a.status === "zelle_pending_verification" ? (
+                                        <Button
+                                          variant="outline"
+                                          className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                          onClick={() => markZelleConfirmed(a.id)}
+                                        >
+                                          Mark Zelle Confirmed
+                                        </Button>
+                                      ) : null}
+
+                                      {a.status !== "completed" && a.status !== "zelle_pending_verification" ? (
                                         <Button
                                           variant="outline"
                                           className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
@@ -1196,6 +1391,7 @@ export default function App() {
                                           Mark completed
                                         </Button>
                                       ) : null}
+
                                       <Button
                                         variant="outline"
                                         className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
@@ -1224,15 +1420,15 @@ export default function App() {
       <footer className="mx-auto max-w-6xl px-4 pb-10">
         <div className="mt-6 rounded-2xl border border-[#E7DFD6] bg-white p-5 text-sm text-neutral-700">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="font-medium">Confirmed only after payment</div>
+            <div className="font-medium">Dual payment booking flow</div>
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              $50 Deposit Required
+              Stripe + Zelle
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
-            <li>Booking details are saved as pending locally</li>
-            <li>Appointment becomes confirmed only after deposit success</li>
-            <li>Confirmed bookings appear in the schedule and admin view</li>
+            <li>Stripe confirms automatically after online payment</li>
+            <li>Zelle requests are saved pending verification</li>
+            <li>Admin can manually confirm Zelle appointments after payment is received</li>
           </ul>
         </div>
       </footer>
