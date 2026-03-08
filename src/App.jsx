@@ -11,6 +11,10 @@ import {
   Download,
   Trash2,
   CreditCard,
+  CheckCircle2,
+  Sparkles,
+  CalendarPlus,
+  BadgeDollarSign,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,8 +26,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-const LS_KEY = "mzparas_lux_booking_v5";
-const PENDING_KEY = "mzparas_pending_booking_v1";
+const LS_KEY = "mzparas_lux_booking_v6";
+const PENDING_KEY = "mzparas_pending_booking_v2";
 const REQUIRED_DEPOSIT = 50;
 
 const DEFAULT_SERVICES = [
@@ -33,6 +37,24 @@ const DEFAULT_SERVICES = [
   { id: "svc-natural-pedi", name: "Natural Pedicure", durationMin: 60, price: 45 },
   { id: "svc-gel-add", name: "Gel Polish Add-On", durationMin: 15, price: 10 },
   { id: "svc-design", name: "Design Add-On", durationMin: 15, price: 10 },
+];
+
+const FEATURED_GALLERY = [
+  {
+    title: "Luxury Acrylic Sets",
+    subtitle: "Clean structure • glossy finish • high-end detail",
+    tone: "from-[#F2E6DC] to-[#EADDD1]",
+  },
+  {
+    title: "Signature Natural Nails",
+    subtitle: "Soft, polished, elevated everyday beauty",
+    tone: "from-[#EEE3D8] to-[#E5D7CA]",
+  },
+  {
+    title: "Pedicure Experience",
+    subtitle: "Relaxed finish with refined salon care",
+    tone: "from-[#F4ECE4] to-[#E8DDD0]",
+  },
 ];
 
 const DEFAULT_HOURS = {
@@ -165,6 +187,40 @@ function clearPendingBooking() {
   localStorage.removeItem(PENDING_KEY);
 }
 
+function formatICSDate(date) {
+  const y = date.getUTCFullYear();
+  const m = pad2(date.getUTCMonth() + 1);
+  const d = pad2(date.getUTCDate());
+  const h = pad2(date.getUTCHours());
+  const min = pad2(date.getUTCMinutes());
+  const s = pad2(date.getUTCSeconds());
+  return `${y}${m}${d}T${h}${min}${s}Z`;
+}
+
+function downloadAppointmentICS(booking, salonName, locationLine, serviceNames) {
+  const start = new Date(booking.startISO);
+  const end = new Date(booking.endISO);
+  const now = new Date();
+
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Mz Paras Nailz//Booking//EN",
+    "BEGIN:VEVENT",
+    `UID:${booking.id}`,
+    `DTSTAMP:${formatICSDate(now)}`,
+    `DTSTART:${formatICSDate(start)}`,
+    `DTEND:${formatICSDate(end)}`,
+    `SUMMARY:${salonName} Appointment`,
+    `DESCRIPTION:${serviceNames}`,
+    `LOCATION:${locationLine}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\n");
+
+  downloadText("mzparas-appointment.ics", ics);
+}
+
 export default function App() {
   const localLoaded = useMemo(() => loadLocal(), []);
 
@@ -183,6 +239,7 @@ export default function App() {
 
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [lastConfirmedBooking, setLastConfirmedBooking] = useState(null);
 
   const [adminAuthed, setAdminAuthed] = useState(false);
   const [pinInput, setPinInput] = useState("");
@@ -209,12 +266,12 @@ export default function App() {
       const pending = loadPendingBooking();
 
       if (pending) {
+        const confirmedBooking = { ...pending, status: "confirmed" };
+
         setAppointments((prev) => {
           const exists = prev.some((a) => a.id === pending.id);
           if (exists) return prev;
-          return [...prev, { ...pending, status: "confirmed" }].sort((a, b) =>
-            a.startISO.localeCompare(b.startISO)
-          );
+          return [...prev, confirmedBooking].sort((a, b) => a.startISO.localeCompare(b.startISO));
         });
 
         const start = new Date(pending.startISO);
@@ -231,6 +288,7 @@ export default function App() {
           settings.locationLine
         );
 
+        setLastConfirmedBooking(confirmedBooking);
         clearPendingBooking();
         setSuccessMsg("Deposit paid successfully. Your appointment is confirmed.");
         setCustomerName("");
@@ -289,6 +347,24 @@ export default function App() {
     });
   }, [selectedDate]);
 
+  const todayAppointments = useMemo(() => {
+    return appointments.filter((a) => a.date === todayISO && a.status === "confirmed");
+  }, [appointments, todayISO]);
+
+  const upcomingAppointments = useMemo(() => {
+    return appointments
+      .filter((a) => new Date(a.startISO) >= new Date() && a.status === "confirmed")
+      .sort((a, b) => a.startISO.localeCompare(b.startISO));
+  }, [appointments]);
+
+  const confirmedDepositsCollected = useMemo(() => {
+    return appointments.filter((a) => a.status === "confirmed").length * REQUIRED_DEPOSIT;
+  }, [appointments]);
+
+  const todayRevenue = useMemo(() => {
+    return todayAppointments.reduce((sum, a) => sum + (a.totalPrice || 0), 0);
+  }, [todayAppointments]);
+
   function toggleService(id) {
     setSelectedServiceIds((prev) => {
       const has = prev.includes(id);
@@ -316,7 +392,7 @@ export default function App() {
     if (!needed || needed <= 0) return [];
 
     const dayAppts = appointments
-      .filter((a) => a.date === selectedDate)
+      .filter((a) => a.date === selectedDate && a.status === "confirmed")
       .map((a) => ({ start: new Date(a.startISO), end: new Date(a.endISO) }));
 
     const results = [];
@@ -340,7 +416,7 @@ export default function App() {
 
   const appointmentsForDay = useMemo(() => {
     return appointments
-      .filter((a) => a.date === selectedDate)
+      .filter((a) => a.date === selectedDate && a.status === "confirmed")
       .sort((a, b) => a.startISO.localeCompare(b.startISO));
   }, [appointments, selectedDate]);
 
@@ -399,7 +475,7 @@ export default function App() {
     const end = addMinutes(start, totalDuration + clamp(settings.bufferMin, 0, 60));
 
     const conflict = appointments
-      .filter((a) => a.date === selectedDate)
+      .filter((a) => a.date === selectedDate && a.status === "confirmed")
       .some((a) => overlaps(start, end, new Date(a.startISO), new Date(a.endISO)));
 
     if (conflict) {
@@ -430,6 +506,12 @@ export default function App() {
 
   function cancelAppt(id) {
     setAppointments((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  function markCompleted(id) {
+    setAppointments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: "completed" } : a))
+    );
   }
 
   function exportCSV() {
@@ -485,6 +567,14 @@ export default function App() {
     return `Hours: ${hoursForDay.open} – ${hoursForDay.close}`;
   }, [hoursForDay]);
 
+  const lastConfirmedServiceNames = useMemo(() => {
+    if (!lastConfirmedBooking) return "";
+    return lastConfirmedBooking.serviceIds
+      .map((id) => services.find((s) => s.id === id)?.name)
+      .filter(Boolean)
+      .join(", ");
+  }, [lastConfirmedBooking, services]);
+
   return (
     <div className="min-h-screen bg-[#F5F0E9] text-neutral-900">
       <header className="sticky top-0 z-20 border-b border-[#E7DFD6] bg-[#F5F0E9]/90 backdrop-blur">
@@ -529,11 +619,95 @@ export default function App() {
           </TabsList>
 
           <TabsContent value="book" className="mt-6">
+            {lastConfirmedBooking ? (
+              <Card className="mb-6 rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
+                <CardContent className="p-6">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="space-y-3">
+                      <div className="inline-flex items-center gap-2 rounded-full bg-[#F8F3ED] px-3 py-1 text-sm text-neutral-800">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Deposit received
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-semibold tracking-tight">
+                          Your appointment is confirmed
+                        </h2>
+                        <p className="mt-1 text-sm text-neutral-600">
+                          Thank you for reserving with {settings.salonName}.
+                        </p>
+                      </div>
+                      <div className="grid gap-2 text-sm text-neutral-700">
+                        <div>
+                          <span className="font-medium">Service:</span> {lastConfirmedServiceNames}
+                        </div>
+                        <div>
+                          <span className="font-medium">Date:</span> {lastConfirmedBooking.date}
+                        </div>
+                        <div>
+                          <span className="font-medium">Time:</span>{" "}
+                          {formatTime(new Date(lastConfirmedBooking.startISO))}
+                        </div>
+                        <div>
+                          <span className="font-medium">Deposit paid:</span> ${REQUIRED_DEPOSIT}
+                        </div>
+                        <div>
+                          <span className="font-medium">Remaining balance at appointment:</span>{" "}
+                          ${Math.max(0, lastConfirmedBooking.totalPrice - REQUIRED_DEPOSIT)}
+                        </div>
+                        <div>
+                          <span className="font-medium">Location:</span> {settings.locationLine}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex w-full flex-col gap-2 md:w-[250px]">
+                      <Button
+                        className="h-11 rounded-2xl bg-black text-white hover:bg-neutral-900"
+                        onClick={() =>
+                          downloadAppointmentICS(
+                            lastConfirmedBooking,
+                            settings.salonName,
+                            settings.locationLine,
+                            lastConfirmedServiceNames
+                          )
+                        }
+                      >
+                        <CalendarPlus className="mr-2 h-4 w-4" />
+                        Add to calendar
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                        onClick={() => setLastConfirmedBooking(null)}
+                      >
+                        Close
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <div className="mb-6 grid gap-4 md:grid-cols-3">
+              {FEATURED_GALLERY.map((item) => (
+                <div
+                  key={item.title}
+                  className={`rounded-3xl border border-[#E7DFD6] bg-gradient-to-br ${item.tone} p-6 shadow-sm`}
+                >
+                  <div className="mb-6 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/80">
+                    <Sparkles className="h-5 w-5" />
+                  </div>
+                  <div className="text-lg font-semibold tracking-tight">{item.title}</div>
+                  <div className="mt-2 text-sm text-neutral-700">{item.subtitle}</div>
+                </div>
+              ))}
+            </div>
+
             <div className="grid gap-6 lg:grid-cols-3">
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">Choose services</CardTitle>
+                    <CardTitle className="text-base">Select your services</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="grid gap-2">
@@ -581,7 +755,7 @@ export default function App() {
 
                     <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
                       <div className="flex items-center justify-between">
-                        <div className="text-sm text-neutral-600">Estimated total</div>
+                        <div className="text-sm text-neutral-600">Estimated service total</div>
                         <div className="text-lg font-semibold">${totalPrice}</div>
                       </div>
                       <div className="mt-1 flex items-center justify-between text-sm text-neutral-600">
@@ -610,7 +784,7 @@ export default function App() {
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">Pick a time</CardTitle>
+                    <CardTitle className="text-base">Reserve your time</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {slots.length === 0 ? (
@@ -644,7 +818,7 @@ export default function App() {
 
                     <div className="space-y-3">
                       <div className="grid gap-2">
-                        <Label htmlFor="name">Your name</Label>
+                        <Label htmlFor="name">Client name</Label>
                         <Input
                           id="name"
                           value={customerName}
@@ -668,12 +842,12 @@ export default function App() {
                       </div>
 
                       <div className="grid gap-2">
-                        <Label htmlFor="notes">Notes (optional)</Label>
+                        <Label htmlFor="notes">Booking notes (optional)</Label>
                         <Textarea
                           id="notes"
                           value={customerNotes}
                           onChange={(e) => setCustomerNotes(e.target.value)}
-                          placeholder="Design idea, preferred shape/length, etc."
+                          placeholder="Design idea, preferred shape, length, etc."
                           className="border-[#E7DFD6] bg-white"
                         />
                       </div>
@@ -682,7 +856,7 @@ export default function App() {
                         className="h-12 w-full rounded-2xl bg-black text-white hover:bg-neutral-900"
                         onClick={bookWithDeposit}
                       >
-                        Pay $50 Deposit
+                        Secure appointment with $50 deposit
                       </Button>
 
                       <div className="text-xs text-neutral-500">
@@ -696,7 +870,7 @@ export default function App() {
               <div className="lg:col-span-1">
                 <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">Deposit summary</CardTitle>
+                    <CardTitle className="text-base">Deposit & policy</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
@@ -718,6 +892,20 @@ export default function App() {
 
                     <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
                       Your time slot is only held after deposit payment succeeds.
+                    </div>
+
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
+                      <div className="mb-3 flex items-center gap-2 font-medium">
+                        <BadgeDollarSign className="h-4 w-4" />
+                        Cancellation & deposit policy
+                      </div>
+                      <ul className="list-disc space-y-2 pl-5 text-sm text-neutral-700">
+                        <li>$50 deposit is required to reserve your appointment.</li>
+                        <li>Deposits are non-refundable.</li>
+                        <li>Rescheduling requests should be made at least 24 hours in advance.</li>
+                        <li>Late arrivals may require shortened service time.</li>
+                        <li>No-shows forfeit the deposit.</li>
+                      </ul>
                     </div>
 
                     {appointmentsForDay.length === 0 ? (
@@ -811,11 +999,32 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
-                          <div className="flex items-center gap-2 font-medium">
-                            <Shield className="h-4 w-4" /> Admin unlocked
+                        <div className="grid gap-3">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
+                              <div className="text-xs uppercase tracking-wide text-neutral-500">Today’s bookings</div>
+                              <div className="mt-1 text-2xl font-semibold">{todayAppointments.length}</div>
+                            </div>
+                            <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
+                              <div className="text-xs uppercase tracking-wide text-neutral-500">Upcoming</div>
+                              <div className="mt-1 text-2xl font-semibold">{upcomingAppointments.length}</div>
+                            </div>
+                            <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
+                              <div className="text-xs uppercase tracking-wide text-neutral-500">Deposits collected</div>
+                              <div className="mt-1 text-2xl font-semibold">${confirmedDepositsCollected}</div>
+                            </div>
+                            <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
+                              <div className="text-xs uppercase tracking-wide text-neutral-500">Today’s revenue</div>
+                              <div className="mt-1 text-2xl font-semibold">${todayRevenue}</div>
+                            </div>
                           </div>
-                          <div className="mt-1 text-xs text-neutral-600">CSV export ready</div>
+
+                          <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
+                            <div className="flex items-center gap-2 font-medium">
+                              <Shield className="h-4 w-4" /> Admin unlocked
+                            </div>
+                            <div className="mt-1 text-xs text-neutral-600">Manage appointments, exports, and completion status.</div>
+                          </div>
                         </div>
 
                         <div className="grid gap-2">
@@ -953,15 +1162,26 @@ export default function App() {
 
                                   <div className="flex flex-col items-end gap-2">
                                     <div className="font-semibold">${a.totalPrice}</div>
-                                    <Button
-                                      variant="outline"
-                                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                                      onClick={() => {
-                                        if (confirm("Cancel this appointment?")) cancelAppt(a.id);
-                                      }}
-                                    >
-                                      Cancel
-                                    </Button>
+                                    <div className="flex flex-wrap gap-2 justify-end">
+                                      {a.status !== "completed" ? (
+                                        <Button
+                                          variant="outline"
+                                          className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                          onClick={() => markCompleted(a.id)}
+                                        >
+                                          Mark completed
+                                        </Button>
+                                      ) : null}
+                                      <Button
+                                        variant="outline"
+                                        className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                        onClick={() => {
+                                          if (confirm("Cancel this appointment?")) cancelAppt(a.id);
+                                        }}
+                                      >
+                                        Cancel
+                                      </Button>
+                                    </div>
                                   </div>
                                 </div>
                               </div>
