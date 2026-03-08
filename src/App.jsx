@@ -22,7 +22,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-const LS_KEY = "mzparas_lux_booking_v4";
+const LS_KEY = "mzparas_lux_booking_v5";
+const PENDING_KEY = "mzparas_pending_booking_v1";
 const REQUIRED_DEPOSIT = 50;
 
 const DEFAULT_SERVICES = [
@@ -107,6 +108,63 @@ function saveLocal(state) {
   localStorage.setItem(LS_KEY, JSON.stringify(state));
 }
 
+function normalizePhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (String(phone).trim().startsWith("+")) return String(phone).trim();
+  return String(phone).trim();
+}
+
+async function sendBookingSMS(phone, service, date, time, locationLine) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return;
+
+  try {
+    const res = await fetch("/api/send-sms", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        to: normalized,
+        message: `Thanks for booking with Mz Para's Nailz 💅
+
+Service: ${service}
+Date: ${date}
+Time: ${time}
+Location: ${locationLine}
+
+We look forward to seeing you!`,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("SMS API error:", data);
+    }
+  } catch (err) {
+    console.error("SMS failed:", err);
+  }
+}
+
+function loadPendingBooking() {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingBooking(booking) {
+  localStorage.setItem(PENDING_KEY, JSON.stringify(booking));
+}
+
+function clearPendingBooking() {
+  localStorage.removeItem(PENDING_KEY);
+}
+
 export default function App() {
   const localLoaded = useMemo(() => loadLocal(), []);
 
@@ -140,6 +198,59 @@ export default function App() {
     setErrorMsg("");
     setSuccessMsg("");
   }, [selectedDate, selectedServiceIds.join("|")]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const depositStatus = params.get("deposit");
+
+    if (!depositStatus) return;
+
+    if (depositStatus === "success") {
+      const pending = loadPendingBooking();
+
+      if (pending) {
+        setAppointments((prev) => {
+          const exists = prev.some((a) => a.id === pending.id);
+          if (exists) return prev;
+          return [...prev, { ...pending, status: "confirmed" }].sort((a, b) =>
+            a.startISO.localeCompare(b.startISO)
+          );
+        });
+
+        const start = new Date(pending.startISO);
+        const serviceNames = pending.serviceIds
+          .map((id) => services.find((s) => s.id === id)?.name)
+          .filter(Boolean)
+          .join(", ");
+
+        sendBookingSMS(
+          pending.customer?.phone || "",
+          serviceNames,
+          pending.date,
+          formatTime(start),
+          settings.locationLine
+        );
+
+        clearPendingBooking();
+        setSuccessMsg("Deposit paid successfully. Your appointment is confirmed.");
+        setCustomerName("");
+        setCustomerPhone("");
+        setCustomerNotes("");
+        setSelectedTimeISO(null);
+      } else {
+        setSuccessMsg("Deposit paid successfully.");
+      }
+    }
+
+    if (depositStatus === "cancel") {
+      clearPendingBooking();
+      setErrorMsg("Deposit payment was canceled. Your appointment was not confirmed.");
+    }
+
+    params.delete("deposit");
+    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+    window.history.replaceState({}, "", newUrl);
+  }, [services, settings.locationLine]);
 
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
@@ -260,16 +371,19 @@ export default function App() {
 
       if (!res.ok) {
         setErrorMsg(data.error || "Unable to start deposit checkout.");
-        return;
+        return false;
       }
 
       if (data.url) {
         window.location.href = data.url;
-      } else {
-        setErrorMsg("No checkout URL returned.");
+        return true;
       }
+
+      setErrorMsg("No checkout URL returned.");
+      return false;
     } catch (error) {
       setErrorMsg("Checkout error: " + error.message);
+      return false;
     }
   }
 
@@ -293,7 +407,7 @@ export default function App() {
       return;
     }
 
-    const draftAppt = {
+    const pendingAppt = {
       id: uid(),
       createdAtISO: new Date().toISOString(),
       date: selectedDate,
@@ -307,13 +421,10 @@ export default function App() {
         phone: customerPhone.trim(),
         notes: customerNotes.trim(),
       },
-      status: "deposit_pending",
+      status: "pending_payment",
     };
 
-    setAppointments((prev) =>
-      [...prev, draftAppt].sort((a, b) => a.startISO.localeCompare(b.startISO))
-    );
-
+    savePendingBooking(pendingAppt);
     await startDepositCheckout();
   }
 
@@ -562,7 +673,7 @@ export default function App() {
                       </Button>
 
                       <div className="text-xs text-neutral-500">
-                        Your appointment is reserved after deposit payment.
+                        Appointment is confirmed only after successful deposit payment.
                       </div>
                     </div>
                   </CardContent>
@@ -593,12 +704,12 @@ export default function App() {
                     </div>
 
                     <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700">
-                      Deposits help secure your time slot and reduce no-shows.
+                      Your time slot is only held after Stripe payment succeeds.
                     </div>
 
                     {appointmentsForDay.length === 0 ? (
                       <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-700">
-                        No appointments yet for {friendlyDate}.
+                        No confirmed appointments yet for {friendlyDate}.
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -716,6 +827,7 @@ export default function App() {
                             onClick={() => {
                               if (confirm("Delete ALL appointments?")) {
                                 setAppointments([]);
+                                clearPendingBooking();
                               }
                             }}
                           >
@@ -782,7 +894,7 @@ export default function App() {
               <div className="lg:col-span-2">
                 <Card className="rounded-2xl shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">All appointments</CardTitle>
+                    <CardTitle className="text-base">Confirmed appointments</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {!adminAuthed ? (
@@ -791,7 +903,7 @@ export default function App() {
                       </div>
                     ) : appointments.length === 0 ? (
                       <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-700">
-                        No appointments yet.
+                        No confirmed appointments yet.
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -849,15 +961,15 @@ export default function App() {
       <footer className="mx-auto max-w-6xl px-4 pb-10">
         <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5 text-sm text-neutral-700">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="font-medium">Luxury booking with deposit protection</div>
+            <div className="font-medium">Confirmed only after payment</div>
             <Badge variant="secondary" className="rounded-xl">
               $50 Deposit Required
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
-            <li>Clients choose services and time</li>
-            <li>$50 deposit required to reserve the appointment</li>
-            <li>Remaining balance is due at the appointment</li>
+            <li>Booking details are saved as pending locally</li>
+            <li>Appointment becomes confirmed only after Stripe success</li>
+            <li>Confirmed bookings appear in the schedule and admin view</li>
           </ul>
         </div>
       </footer>
