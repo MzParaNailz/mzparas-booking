@@ -717,7 +717,7 @@ export default function App() {
                     </div>
 
                     <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
-                      Your time slot is only held after Stripe payment succeeds.
+                      Your time slot is only held after deposit payment succeeds.
                     </div>
 
                     {appointmentsForDay.length === 0 ? (
@@ -987,7 +987,7 @@ export default function App() {
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
             <li>Booking details are saved as pending locally</li>
-            <li>Appointment becomes confirmed only after Stripe success</li>
+            <li>Appointment becomes confirmed only after deposit success</li>
             <li>Confirmed bookings appear in the schedule and admin view</li>
           </ul>
         </div>
