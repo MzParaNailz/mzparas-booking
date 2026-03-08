@@ -374,44 +374,6 @@ export default function App() {
     [services, selectedServiceId]
   );
 
-  const slots = useMemo(() => {
-    if (hoursForDay.closed) return [];
-
-    const [openH, openM] = hoursForDay.open.split(":").map(Number);
-    const [closeH, closeM] = hoursForDay.close.split(":").map(Number);
-
-    const day = parseISODate(selectedDate);
-    const open = new Date(day.getFullYear(), day.getMonth(), day.getDate(), openH, openM, 0, 0);
-    const close = new Date(day.getFullYear(), day.getMonth(), day.getDate(), closeH, closeM, 0, 0);
-
-    const step = clamp(settings.slotStepMin, 5, 60);
-    const buffer = clamp(settings.bufferMin, 0, 60);
-    const needed = totalDuration + buffer;
-    if (!needed || needed <= 0) return [];
-
-    const dayAppts = appointments
-      .filter((a) => a.date === selectedDate && a.status === "confirmed")
-      .map((a) => ({ start: new Date(a.startISO), end: new Date(a.endISO) }));
-
-    const results = [];
-    for (let t = new Date(open); t <= close; t = addMinutes(t, step)) {
-      const end = addMinutes(t, needed);
-      if (end > close) continue;
-
-      if (selectedDate === todayISO) {
-        const grace = addMinutes(new Date(), 10);
-        if (t < grace) continue;
-      }
-
-      const conflict = dayAppts.some((a) => overlaps(t, end, a.start, a.end));
-      if (conflict) continue;
-
-      results.push({ start: t, end });
-    }
-
-    return results;
-  }, [appointments, hoursForDay, selectedDate, settings.bufferMin, settings.slotStepMin, todayISO, totalDuration]);
-
   const allTimeOptions = useMemo(() => {
     if (hoursForDay.closed) return [];
 
@@ -763,7 +725,7 @@ export default function App() {
                         <SelectTrigger className="border-[#E7DFD6] bg-white">
                           <SelectValue placeholder="Choose a service" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="bg-white">
                           {services.map((service) => (
                             <SelectItem key={service.id} value={service.id}>
                               {service.name} — {service.durationMin} min — ${service.price}
@@ -861,8 +823,8 @@ export default function App() {
                                 }}
                                 className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
                                   slot.available
-                                    ? "text-neutral-900 hover:bg-[#EFE7DD]"
-                                    : "cursor-not-allowed text-neutral-400 line-through decoration-neutral-300 decoration-1"
+                                    ? "bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                    : "bg-white cursor-not-allowed text-neutral-400 line-through decoration-neutral-300 decoration-1"
                                 }`}
                               >
                                 <span>{slot.label}</span>
