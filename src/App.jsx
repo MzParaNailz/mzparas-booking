@@ -107,6 +107,16 @@ function formatTime(date) {
   return `${hh}:${pad2(m)} ${ampm}`;
 }
 
+function formatLongDate(iso) {
+  const d = parseISODate(iso);
+  return d.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
@@ -250,6 +260,19 @@ function appointmentToDbRow(appt) {
   };
 }
 
+function statusBadgeClasses(status) {
+  switch (status) {
+    case "confirmed":
+      return "bg-[#E8F5E9] text-[#1B5E20]";
+    case "completed":
+      return "bg-[#E3F2FD] text-[#0D47A1]";
+    case "zelle_pending_verification":
+      return "bg-[#FFF8E1] text-[#8D6E00]";
+    default:
+      return "bg-[#F3EDE6] text-neutral-700";
+  }
+}
+
 export default function App() {
   const [services] = useState(DEFAULT_SERVICES);
   const [hours] = useState(DEFAULT_HOURS);
@@ -261,6 +284,7 @@ export default function App() {
   const [selectedTimeISO, setSelectedTimeISO] = useState(null);
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("stripe");
+  const [calendarStartDate, setCalendarStartDate] = useState(() => toISODate(new Date()));
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -396,15 +420,7 @@ export default function App() {
     [hours, dayOfWeek]
   );
 
-  const friendlyDate = useMemo(() => {
-    const d = parseISODate(selectedDate);
-    return d.toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    });
-  }, [selectedDate]);
+  const friendlyDate = useMemo(() => formatLongDate(selectedDate), [selectedDate]);
 
   const todayAppointments = useMemo(() => {
     return appointments.filter((a) => a.date === todayISO && (a.status === "confirmed" || a.status === "completed"));
@@ -489,6 +505,33 @@ export default function App() {
       )
       .sort((a, b) => a.startISO.localeCompare(b.startISO));
   }, [appointments, selectedDate]);
+
+  const calendarDays = useMemo(() => {
+    const start = parseISODate(calendarStartDate);
+    const days = [];
+
+    for (let i = 0; i < 7; i += 1) {
+      const day = addMinutes(start, i * 24 * 60);
+      const iso = toISODate(day);
+      const dayAppointments = appointments
+        .filter((a) => a.date === iso)
+        .sort((a, b) => a.startISO.localeCompare(b.startISO));
+
+      days.push({
+        iso,
+        label: formatLongDate(iso),
+        appointments: dayAppointments,
+      });
+    }
+
+    return days;
+  }, [calendarStartDate, appointments]);
+
+  function shiftCalendar(days) {
+    const start = parseISODate(calendarStartDate);
+    const shifted = addMinutes(start, days * 24 * 60);
+    setCalendarStartDate(toISODate(shifted));
+  }
 
   function validate() {
     if (!selectedServiceId) return "Please select a service.";
@@ -810,7 +853,7 @@ export default function App() {
               Clean White Luxury
             </Badge>
             <Badge className="rounded-xl bg-black text-white hover:bg-black">
-              Database Live
+              Live Calendar
             </Badge>
           </div>
         </div>
@@ -818,8 +861,9 @@ export default function App() {
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         <Tabs defaultValue="book" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 bg-white border border-[#E7DFD6] sm:w-[420px]">
+          <TabsList className="grid w-full grid-cols-3 bg-white border border-[#E7DFD6] sm:w-[620px]">
             <TabsTrigger value="book">Book</TabsTrigger>
+            <TabsTrigger value="calendar">Calendar</TabsTrigger>
             <TabsTrigger value="admin">Admin</TabsTrigger>
           </TabsList>
 
@@ -1230,6 +1274,106 @@ export default function App() {
             </div>
           </TabsContent>
 
+          <TabsContent value="calendar" className="mt-6">
+            <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
+              <CardHeader>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <CardTitle className="text-base">Live appointment calendar</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                      onClick={() => shiftCalendar(-7)}
+                    >
+                      Previous 7 days
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                      onClick={() => setCalendarStartDate(todayISO)}
+                    >
+                      Today
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                      onClick={() => shiftCalendar(7)}
+                    >
+                      Next 7 days
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {loadingBookings ? (
+                  <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
+                    Loading calendar...
+                  </div>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                    {calendarDays.map((day) => (
+                      <div key={day.iso} className="rounded-2xl border border-[#E7DFD6] bg-[#FCFAF7] p-4">
+                        <div className="mb-4">
+                          <div className="text-sm text-neutral-500">{day.iso}</div>
+                          <div className="font-semibold">{day.label}</div>
+                        </div>
+
+                        {day.appointments.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-[#E7DFD6] bg-white p-4 text-sm text-neutral-500">
+                            No appointments
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {day.appointments.map((appt) => {
+                              const start = new Date(appt.startISO);
+                              const end = new Date(appt.endISO);
+                              const serviceNames = appt.serviceIds
+                                .map((id) => services.find((s) => s.id === id)?.name)
+                                .filter(Boolean)
+                                .join(", ");
+
+                              return (
+                                <motion.div
+                                  key={appt.id}
+                                  initial={{ opacity: 0, y: 6 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="rounded-2xl border border-[#E7DFD6] bg-white p-4"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <div className="font-semibold">{appt.customer?.name || "Client"}</div>
+                                      <div className="mt-1 text-sm text-neutral-700">
+                                        {formatTime(start)} – {formatTime(end)}
+                                      </div>
+                                      <div className="mt-1 text-sm text-neutral-600">{serviceNames}</div>
+                                      {appt.customer?.phone ? (
+                                        <div className="mt-1 text-xs text-neutral-500">{appt.customer.phone}</div>
+                                      ) : null}
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="font-semibold">${appt.totalPrice}</div>
+                                      <div className="mt-1 text-xs text-neutral-500">{appt.paymentMethod || "payment"}</div>
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusBadgeClasses(appt.status)}`}>
+                                      {appt.status.replaceAll("_", " ")}
+                                    </span>
+                                  </div>
+                                </motion.div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="admin" className="mt-6">
             <div className="grid gap-6 lg:grid-cols-3">
               <div className="lg:col-span-1">
@@ -1502,13 +1646,13 @@ export default function App() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="font-medium">Database-backed booking system</div>
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Supabase Live
+              Calendar Live
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
             <li>Bookings are now shared across devices</li>
-            <li>Zelle and card deposits both save to the same database</li>
-            <li>Admin actions update live records instead of browser-only storage</li>
+            <li>Calendar view shows live appointments by day</li>
+            <li>Admin actions update live records instantly</li>
           </ul>
         </div>
       </footer>
