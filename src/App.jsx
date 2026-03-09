@@ -17,6 +17,8 @@ import {
   BadgeDollarSign,
   ChevronDown,
   Landmark,
+  PlusCircle,
+  Ban,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,17 +32,17 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/lib/supabase";
 
-const PENDING_KEY = "mzparas_pending_booking_v4";
+const PENDING_KEY = "mzparas_pending_booking_v5";
 const REQUIRED_DEPOSIT = 50;
 const ZELLE_RECIPIENT = "516-451-4570";
 
 const DEFAULT_SERVICES = [
-  { id: "svc-acrylic-full", name: "Full Set Acrylic", durationMin: 90, price: 65 },
-  { id: "svc-acrylic-fill", name: "Acrylic Fill", durationMin: 60, price: 45 },
-  { id: "svc-natural-mani", name: "Natural Manicure", durationMin: 45, price: 30 },
-  { id: "svc-natural-pedi", name: "Natural Pedicure", durationMin: 60, price: 45 },
-  { id: "svc-gel-add", name: "Gel Polish Add-On", durationMin: 15, price: 10 },
-  { id: "svc-design", name: "Design Add-On", durationMin: 15, price: 10 },
+  { id: "svc-acrylic-full", name: "Full Set Acrylic", durationMin: 90, price: 65, isActive: true, sortOrder: 0 },
+  { id: "svc-acrylic-fill", name: "Acrylic Fill", durationMin: 60, price: 45, isActive: true, sortOrder: 1 },
+  { id: "svc-natural-mani", name: "Natural Manicure", durationMin: 45, price: 30, isActive: true, sortOrder: 2 },
+  { id: "svc-natural-pedi", name: "Natural Pedicure", durationMin: 60, price: 45, isActive: true, sortOrder: 3 },
+  { id: "svc-gel-add", name: "Gel Polish Add-On", durationMin: 15, price: 10, isActive: true, sortOrder: 4 },
+  { id: "svc-design", name: "Design Add-On", durationMin: 15, price: 10, isActive: true, sortOrder: 5 },
 ];
 
 const FEATURED_GALLERY = [
@@ -266,6 +268,50 @@ function appointmentToDbRow(appt) {
   };
 }
 
+function dbRowToService(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    durationMin: Number(row.duration_min || 0),
+    price: Number(row.price || 0),
+    isActive: !!row.is_active,
+    sortOrder: Number(row.sort_order || 0),
+  };
+}
+
+function serviceToDbRow(service) {
+  return {
+    id: service.id,
+    name: service.name,
+    duration_min: Number(service.durationMin || 0),
+    price: Number(service.price || 0),
+    is_active: !!service.isActive,
+    sort_order: Number(service.sortOrder || 0),
+  };
+}
+
+function dbRowToBlockedTime(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    startTime: row.start_time || "",
+    endTime: row.end_time || "",
+    isAllDay: !!row.is_all_day,
+    note: row.note || "",
+  };
+}
+
+function blockedTimeToDbRow(block) {
+  return {
+    id: block.id,
+    date: block.date,
+    start_time: block.startTime || null,
+    end_time: block.endTime || null,
+    is_all_day: !!block.isAllDay,
+    note: block.note || null,
+  };
+}
+
 function statusBadgeClasses(status) {
   switch (status) {
     case "confirmed":
@@ -280,13 +326,14 @@ function statusBadgeClasses(status) {
 }
 
 export default function App() {
-  const [services] = useState(DEFAULT_SERVICES);
+  const [services, setServices] = useState([]);
   const [hours] = useState(DEFAULT_HOURS);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [appointments, setAppointments] = useState([]);
+  const [blockedTimes, setBlockedTimes] = useState([]);
 
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()));
-  const [selectedServiceId, setSelectedServiceId] = useState(DEFAULT_SERVICES[0].id);
+  const [selectedServiceId, setSelectedServiceId] = useState("");
   const [selectedTimeISO, setSelectedTimeISO] = useState(null);
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("stripe");
@@ -306,7 +353,24 @@ export default function App() {
   const [pinInput, setPinInput] = useState("");
   const [loadingBookings, setLoadingBookings] = useState(true);
 
+  const [newServiceName, setNewServiceName] = useState("");
+  const [newServiceDuration, setNewServiceDuration] = useState("60");
+  const [newServicePrice, setNewServicePrice] = useState("0");
+  const [serviceSaveMsg, setServiceSaveMsg] = useState("");
+
+  const [blockDate, setBlockDate] = useState(() => toISODate(new Date()));
+  const [blockAllDay, setBlockAllDay] = useState(true);
+  const [blockStartTime, setBlockStartTime] = useState("12:00");
+  const [blockEndTime, setBlockEndTime] = useState("13:00");
+  const [blockNote, setBlockNote] = useState("");
+  const [blockMsg, setBlockMsg] = useState("");
+
   const todayISO = useMemo(() => toISODate(new Date()), []);
+
+  const activeServices = useMemo(
+    () => services.filter((s) => s.isActive).sort((a, b) => a.sortOrder - b.sortOrder),
+    [services]
+  );
 
   async function refreshAppointments() {
     setLoadingBookings(true);
@@ -326,9 +390,66 @@ export default function App() {
     setLoadingBookings(false);
   }
 
+  async function refreshServices() {
+    const { data, error } = await supabase
+      .from("salon_services")
+      .select("*")
+      .order("sort_order", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      setErrorMsg("Could not load services.");
+      return;
+    }
+
+    const rows = (data || []).map(dbRowToService);
+
+    if (rows.length === 0) {
+      const seeded = DEFAULT_SERVICES.map(serviceToDbRow);
+      const { error: seedError } = await supabase.from("salon_services").insert(seeded);
+      if (seedError) {
+        console.error(seedError);
+        setErrorMsg("Could not seed default services.");
+        return;
+      }
+      setServices(DEFAULT_SERVICES);
+      setSelectedServiceId(DEFAULT_SERVICES[0].id);
+      return;
+    }
+
+    setServices(rows);
+    if (!selectedServiceId) {
+      const firstActive = rows.find((s) => s.isActive);
+      setSelectedServiceId(firstActive?.id || rows[0]?.id || "");
+    }
+  }
+
+  async function refreshBlockedTimes() {
+    const { data, error } = await supabase
+      .from("blocked_times")
+      .select("*")
+      .order("date", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      setErrorMsg("Could not load blocked time rules.");
+      return;
+    }
+
+    setBlockedTimes((data || []).map(dbRowToBlockedTime));
+  }
+
   useEffect(() => {
     refreshAppointments();
+    refreshServices();
+    refreshBlockedTimes();
   }, []);
+
+  useEffect(() => {
+    if (!selectedServiceId && activeServices.length > 0) {
+      setSelectedServiceId(activeServices[0].id);
+    }
+  }, [activeServices, selectedServiceId]);
 
   useEffect(() => {
     setSelectedTimeISO(null);
@@ -454,12 +575,22 @@ export default function App() {
   }, [todayAppointments]);
 
   const selectedService = useMemo(
-    () => services.find((s) => s.id === selectedServiceId) || services[0],
-    [services, selectedServiceId]
+    () => services.find((s) => s.id === selectedServiceId) || activeServices[0] || null,
+    [services, selectedServiceId, activeServices]
+  );
+
+  const blockedTimesForSelectedDate = useMemo(
+    () => blockedTimes.filter((b) => b.date === selectedDate),
+    [blockedTimes, selectedDate]
+  );
+
+  const selectedDateFullyBlocked = useMemo(
+    () => blockedTimesForSelectedDate.some((b) => b.isAllDay),
+    [blockedTimesForSelectedDate]
   );
 
   const allTimeOptions = useMemo(() => {
-    if (hoursForDay.closed) return [];
+    if (hoursForDay.closed || selectedDateFullyBlocked) return [];
 
     const [openH, openM] = hoursForDay.open.split(":").map(Number);
     const [closeH, closeM] = hoursForDay.close.split(":").map(Number);
@@ -479,6 +610,17 @@ export default function App() {
       )
       .map((a) => ({ start: new Date(a.startISO), end: new Date(a.endISO) }));
 
+    const blockedRanges = blockedTimesForSelectedDate
+      .filter((b) => !b.isAllDay && b.startTime && b.endTime)
+      .map((b) => {
+        const [sh, sm] = b.startTime.split(":").map(Number);
+        const [eh, em] = b.endTime.split(":").map(Number);
+        return {
+          start: new Date(day.getFullYear(), day.getMonth(), day.getDate(), sh, sm, 0, 0),
+          end: new Date(day.getFullYear(), day.getMonth(), day.getDate(), eh, em, 0, 0),
+        };
+      });
+
     const results = [];
     for (let t = new Date(open); t <= close; t = addMinutes(t, step)) {
       const end = addMinutes(t, needed);
@@ -494,6 +636,9 @@ export default function App() {
       const conflict = dayAppts.some((a) => overlaps(t, end, a.start, a.end));
       if (conflict) available = false;
 
+      const blockedConflict = blockedRanges.some((b) => overlaps(t, end, b.start, b.end));
+      if (blockedConflict) available = false;
+
       results.push({
         iso: t.toISOString(),
         label: formatTime(t),
@@ -502,7 +647,17 @@ export default function App() {
     }
 
     return results;
-  }, [appointments, hoursForDay, selectedDate, settings.bufferMin, settings.slotStepMin, todayISO, totalDuration]);
+  }, [
+    appointments,
+    blockedTimesForSelectedDate,
+    hoursForDay,
+    selectedDate,
+    selectedDateFullyBlocked,
+    settings.bufferMin,
+    settings.slotStepMin,
+    todayISO,
+    totalDuration,
+  ]);
 
   const selectedTimeLabel = useMemo(() => {
     if (!selectedTimeISO) return "";
@@ -530,15 +685,24 @@ export default function App() {
         .filter((a) => a.date === iso)
         .sort((a, b) => a.startISO.localeCompare(b.startISO));
 
+      const dayBlocks = blockedTimes
+        .filter((b) => b.date === iso)
+        .sort((a, b) => {
+          if (a.isAllDay && !b.isAllDay) return -1;
+          if (!a.isAllDay && b.isAllDay) return 1;
+          return (a.startTime || "").localeCompare(b.startTime || "");
+        });
+
       days.push({
         iso,
         label: formatLongDate(iso),
         appointments: dayAppointments,
+        blocked: dayBlocks,
       });
     }
 
     return days;
-  }, [calendarStartDate, appointments]);
+  }, [calendarStartDate, appointments, blockedTimes]);
 
   function shiftCalendar(days) {
     const start = parseISODate(calendarStartDate);
@@ -612,6 +776,22 @@ export default function App() {
       return;
     }
 
+    const blockedConflict = blockedTimesForSelectedDate.some((b) => {
+      if (b.isAllDay) return true;
+      if (!b.startTime || !b.endTime) return false;
+      const day = parseISODate(selectedDate);
+      const [sh, sm] = b.startTime.split(":").map(Number);
+      const [eh, em] = b.endTime.split(":").map(Number);
+      const bs = new Date(day.getFullYear(), day.getMonth(), day.getDate(), sh, sm, 0, 0);
+      const be = new Date(day.getFullYear(), day.getMonth(), day.getDate(), eh, em, 0, 0);
+      return overlaps(start, end, bs, be);
+    });
+
+    if (blockedConflict) {
+      setErrorMsg("That time is blocked. Please choose another slot.");
+      return;
+    }
+
     const pendingAppt = {
       id: uid(),
       createdAtISO: new Date().toISOString(),
@@ -654,6 +834,22 @@ export default function App() {
 
     if (conflict) {
       setErrorMsg("That time was just booked. Please choose another slot.");
+      return;
+    }
+
+    const blockedConflict = blockedTimesForSelectedDate.some((b) => {
+      if (b.isAllDay) return true;
+      if (!b.startTime || !b.endTime) return false;
+      const day = parseISODate(selectedDate);
+      const [sh, sm] = b.startTime.split(":").map(Number);
+      const [eh, em] = b.endTime.split(":").map(Number);
+      const bs = new Date(day.getFullYear(), day.getMonth(), day.getDate(), sh, sm, 0, 0);
+      const be = new Date(day.getFullYear(), day.getMonth(), day.getDate(), eh, em, 0, 0);
+      return overlaps(start, end, bs, be);
+    });
+
+    if (blockedConflict) {
+      setErrorMsg("That time is blocked. Please choose another slot.");
       return;
     }
 
@@ -765,6 +961,151 @@ export default function App() {
     await refreshAppointments();
   }
 
+  async function addService() {
+    setServiceSaveMsg("");
+
+    if (!newServiceName.trim()) {
+      setServiceSaveMsg("Enter a service name.");
+      return;
+    }
+
+    const newService = {
+      id: uid(),
+      name: newServiceName.trim(),
+      durationMin: Number(newServiceDuration || 0),
+      price: Number(newServicePrice || 0),
+      isActive: true,
+      sortOrder: services.length,
+    };
+
+    const { error } = await supabase
+      .from("salon_services")
+      .insert([serviceToDbRow(newService)]);
+
+    if (error) {
+      console.error(error);
+      setServiceSaveMsg("Could not add service.");
+      return;
+    }
+
+    setNewServiceName("");
+    setNewServiceDuration("60");
+    setNewServicePrice("0");
+    setServiceSaveMsg("Service added.");
+    await refreshServices();
+  }
+
+  async function updateServiceField(id, field, value) {
+    const current = services.find((s) => s.id === id);
+    if (!current) return;
+
+    const updated = {
+      ...current,
+      [field]: field === "durationMin" || field === "price" || field === "sortOrder" ? Number(value) : value,
+    };
+
+    setServices((prev) => prev.map((s) => (s.id === id ? updated : s)));
+
+    const { error } = await supabase
+      .from("salon_services")
+      .update(serviceToDbRow(updated))
+      .eq("id", id);
+
+    if (error) {
+      console.error(error);
+      setServiceSaveMsg("Could not save service change.");
+      await refreshServices();
+      return;
+    }
+
+    setServiceSaveMsg("Service changes saved.");
+    await refreshServices();
+  }
+
+  async function deleteService(id) {
+    const usedInAppointments = appointments.some((a) => a.serviceIds?.includes(id));
+    if (usedInAppointments) {
+      setServiceSaveMsg("This service exists on past bookings. Turn it inactive instead of deleting.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("salon_services")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error(error);
+      setServiceSaveMsg("Could not delete service.");
+      return;
+    }
+
+    setServiceSaveMsg("Service deleted.");
+    await refreshServices();
+  }
+
+  async function addBlockedTime() {
+    setBlockMsg("");
+
+    if (!blockDate) {
+      setBlockMsg("Choose a date.");
+      return;
+    }
+
+    if (!blockAllDay) {
+      if (!blockStartTime || !blockEndTime) {
+        setBlockMsg("Choose both start and end time.");
+        return;
+      }
+      if (blockStartTime >= blockEndTime) {
+        setBlockMsg("End time must be after start time.");
+        return;
+      }
+    }
+
+    const block = {
+      id: uid(),
+      date: blockDate,
+      startTime: blockAllDay ? "" : blockStartTime,
+      endTime: blockAllDay ? "" : blockEndTime,
+      isAllDay: blockAllDay,
+      note: blockNote.trim(),
+    };
+
+    const { error } = await supabase
+      .from("blocked_times")
+      .insert([blockedTimeToDbRow(block)]);
+
+    if (error) {
+      console.error(error);
+      setBlockMsg("Could not save blocked time.");
+      return;
+    }
+
+    setBlockMsg("Blocked time added.");
+    setBlockAllDay(true);
+    setBlockStartTime("12:00");
+    setBlockEndTime("13:00");
+    setBlockNote("");
+    await refreshBlockedTimes();
+  }
+
+  async function deleteBlockedTime(id) {
+    const { error } = await supabase
+      .from("blocked_times")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error(error);
+      setBlockMsg("Could not delete blocked time.");
+      return;
+    }
+
+    setBlockMsg("Blocked time removed.");
+    await refreshBlockedTimes();
+  }
+
   function exportCSV() {
     const header = [
       "id",
@@ -816,9 +1157,10 @@ export default function App() {
   }
 
   const headerNote = useMemo(() => {
+    if (selectedDateFullyBlocked) return "Selected day is blocked.";
     if (hoursForDay.closed) return "Closed today.";
     return `Hours: ${hoursForDay.open} – ${hoursForDay.close}`;
-  }, [hoursForDay]);
+  }, [hoursForDay, selectedDateFullyBlocked]);
 
   const lastConfirmedServiceNames = useMemo(() => {
     if (!lastConfirmedBooking) return "";
@@ -863,10 +1205,10 @@ export default function App() {
 
           <div className="hidden items-center gap-2 sm:flex">
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Clean White Luxury
+              Editable Services
             </Badge>
             <Badge className="rounded-xl bg-black text-white hover:bg-black">
-              Owner Calendar
+              Blocked Time Control
             </Badge>
           </div>
         </div>
@@ -994,7 +1336,7 @@ export default function App() {
                           <SelectValue placeholder="Choose a service" />
                         </SelectTrigger>
                         <SelectContent className="bg-white">
-                          {services.map((service) => (
+                          {activeServices.map((service) => (
                             <SelectItem key={service.id} value={service.id}>
                               {service.name} — {service.durationMin} min — ${service.price}
                             </SelectItem>
@@ -1003,11 +1345,13 @@ export default function App() {
                       </Select>
                     </div>
 
-                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
-                      <div className="font-medium">{selectedService.name}</div>
-                      <div className="mt-1 text-sm text-neutral-600">{selectedService.durationMin} minutes</div>
-                      <div className="mt-2 text-lg font-semibold">${selectedService.price}</div>
-                    </div>
+                    {selectedService ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
+                        <div className="font-medium">{selectedService.name}</div>
+                        <div className="mt-1 text-sm text-neutral-600">{selectedService.durationMin} minutes</div>
+                        <div className="mt-2 text-lg font-semibold">${selectedService.price}</div>
+                      </div>
+                    ) : null}
 
                     <Separator className="bg-[#E7DFD6]" />
 
@@ -1035,6 +1379,12 @@ export default function App() {
                         <span>+ {settings.bufferMin} min buffer</span>
                       </div>
                     </div>
+
+                    {selectedDateFullyBlocked ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-3 text-sm text-neutral-800">
+                        This date is blocked and unavailable for booking.
+                      </div>
+                    ) : null}
 
                     {errorMsg ? (
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-3 text-sm text-neutral-800">
@@ -1235,6 +1585,23 @@ export default function App() {
                       </ul>
                     </div>
 
+                    {blockedTimesForSelectedDate.length > 0 ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
+                        <div className="mb-2 flex items-center gap-2 font-medium">
+                          <Ban className="h-4 w-4" />
+                          Blocked time on this date
+                        </div>
+                        <div className="space-y-2 text-sm text-neutral-700">
+                          {blockedTimesForSelectedDate.map((b) => (
+                            <div key={b.id}>
+                              {b.isAllDay ? "All day blocked" : `${b.startTime} - ${b.endTime}`}
+                              {b.note ? ` • ${b.note}` : ""}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
                     {loadingBookings ? (
                       <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
                         Loading appointments...
@@ -1331,6 +1698,19 @@ export default function App() {
                             <div className="text-sm text-neutral-500">{day.iso}</div>
                             <div className="font-semibold">{day.label}</div>
                           </div>
+
+                          {day.blocked.length > 0 ? (
+                            <div className="mb-3 space-y-2">
+                              {day.blocked.map((b) => (
+                                <div key={b.id} className="rounded-xl border border-[#E7DFD6] bg-[#F8F3ED] p-3 text-xs text-neutral-700">
+                                  <div className="font-medium">
+                                    {b.isAllDay ? "All day blocked" : `${b.startTime} - ${b.endTime}`}
+                                  </div>
+                                  {b.note ? <div className="mt-1">{b.note}</div> : null}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
 
                           {day.appointments.length === 0 ? (
                             <div className="rounded-2xl border border-dashed border-[#E7DFD6] bg-white p-4 text-sm text-neutral-500">
@@ -1458,7 +1838,7 @@ export default function App() {
                             <div className="flex items-center gap-2 font-medium">
                               <Shield className="h-4 w-4" /> Admin unlocked
                             </div>
-                            <div className="mt-1 text-xs text-neutral-600">Calendar and bookings are visible only after PIN unlock.</div>
+                            <div className="mt-1 text-xs text-neutral-600">You can now edit services and block days or time ranges.</div>
                           </div>
                         </div>
 
@@ -1485,9 +1865,13 @@ export default function App() {
                           <Button
                             variant="outline"
                             className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                            onClick={refreshAppointments}
+                            onClick={async () => {
+                              await refreshAppointments();
+                              await refreshServices();
+                              await refreshBlockedTimes();
+                            }}
                           >
-                            Refresh bookings
+                            Refresh data
                           </Button>
 
                           <Button
@@ -1571,7 +1955,234 @@ export default function App() {
                 </Card>
               </div>
 
-              <div className="lg:col-span-2">
+              <div className="lg:col-span-2 space-y-6">
+                <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base">Editable services</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <Input
+                        value={newServiceName}
+                        onChange={(e) => setNewServiceName(e.target.value)}
+                        placeholder="Service name"
+                        className="border-[#E7DFD6] bg-white"
+                      />
+                      <Input
+                        type="number"
+                        value={newServiceDuration}
+                        onChange={(e) => setNewServiceDuration(e.target.value)}
+                        placeholder="Minutes"
+                        className="border-[#E7DFD6] bg-white"
+                      />
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={newServicePrice}
+                        onChange={(e) => setNewServicePrice(e.target.value)}
+                        placeholder="Price"
+                        className="border-[#E7DFD6] bg-white"
+                      />
+                      <Button
+                        className="rounded-2xl bg-black text-white hover:bg-neutral-900"
+                        onClick={addService}
+                      >
+                        <PlusCircle className="mr-2 h-4 w-4" />
+                        Add service
+                      </Button>
+                    </div>
+
+                    {serviceSaveMsg ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-3 text-sm text-neutral-800">
+                        {serviceSaveMsg}
+                      </div>
+                    ) : null}
+
+                    <div className="space-y-3">
+                      {services
+                        .slice()
+                        .sort((a, b) => a.sortOrder - b.sortOrder)
+                        .map((service) => (
+                          <div key={service.id} className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
+                            <div className="grid gap-3 md:grid-cols-6">
+                              <div className="md:col-span-2">
+                                <Label className="mb-2 block">Name</Label>
+                                <Input
+                                  value={service.name}
+                                  onChange={(e) => updateServiceField(service.id, "name", e.target.value)}
+                                  className="border-[#E7DFD6] bg-white"
+                                />
+                              </div>
+
+                              <div>
+                                <Label className="mb-2 block">Minutes</Label>
+                                <Input
+                                  type="number"
+                                  value={service.durationMin}
+                                  onChange={(e) => updateServiceField(service.id, "durationMin", e.target.value)}
+                                  className="border-[#E7DFD6] bg-white"
+                                />
+                              </div>
+
+                              <div>
+                                <Label className="mb-2 block">Price</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={service.price}
+                                  onChange={(e) => updateServiceField(service.id, "price", e.target.value)}
+                                  className="border-[#E7DFD6] bg-white"
+                                />
+                              </div>
+
+                              <div>
+                                <Label className="mb-2 block">Order</Label>
+                                <Input
+                                  type="number"
+                                  value={service.sortOrder}
+                                  onChange={(e) => updateServiceField(service.id, "sortOrder", e.target.value)}
+                                  className="border-[#E7DFD6] bg-white"
+                                />
+                              </div>
+
+                              <div className="flex items-end gap-2">
+                                <Button
+                                  variant="outline"
+                                  className="w-full rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                  onClick={() => updateServiceField(service.id, "isActive", !service.isActive)}
+                                >
+                                  {service.isActive ? "Active" : "Hidden"}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                  onClick={() => deleteService(service.id)}
+                                >
+                                  Delete
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base">Blocked time management</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-5">
+                      <div>
+                        <Label className="mb-2 block">Date</Label>
+                        <Input
+                          type="date"
+                          value={blockDate}
+                          onChange={(e) => setBlockDate(e.target.value)}
+                          className="border-[#E7DFD6] bg-white"
+                        />
+                      </div>
+
+                      <div className="flex items-end">
+                        <Button
+                          variant="outline"
+                          className="w-full rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                          onClick={() => setBlockAllDay((prev) => !prev)}
+                        >
+                          {blockAllDay ? "All day" : "Time range"}
+                        </Button>
+                      </div>
+
+                      <div>
+                        <Label className="mb-2 block">Start</Label>
+                        <Input
+                          type="time"
+                          value={blockStartTime}
+                          onChange={(e) => setBlockStartTime(e.target.value)}
+                          disabled={blockAllDay}
+                          className="border-[#E7DFD6] bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <Label className="mb-2 block">End</Label>
+                        <Input
+                          type="time"
+                          value={blockEndTime}
+                          onChange={(e) => setBlockEndTime(e.target.value)}
+                          disabled={blockAllDay}
+                          className="border-[#E7DFD6] bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <Label className="mb-2 block">Note</Label>
+                        <Input
+                          value={blockNote}
+                          onChange={(e) => setBlockNote(e.target.value)}
+                          placeholder="Lunch, vacation, etc."
+                          className="border-[#E7DFD6] bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <Button
+                      className="rounded-2xl bg-black text-white hover:bg-neutral-900"
+                      onClick={addBlockedTime}
+                    >
+                      <Ban className="mr-2 h-4 w-4" />
+                      Add blocked time
+                    </Button>
+
+                    {blockMsg ? (
+                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-3 text-sm text-neutral-800">
+                        {blockMsg}
+                      </div>
+                    ) : null}
+
+                    <div className="space-y-3">
+                      {blockedTimes.length === 0 ? (
+                        <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
+                          No blocked times yet.
+                        </div>
+                      ) : (
+                        blockedTimes
+                          .slice()
+                          .sort((a, b) => {
+                            if (a.date !== b.date) return a.date.localeCompare(b.date);
+                            if (a.isAllDay && !b.isAllDay) return -1;
+                            if (!a.isAllDay && b.isAllDay) return 1;
+                            return (a.startTime || "").localeCompare(b.startTime || "");
+                          })
+                          .map((block) => (
+                            <div key={block.id} className="rounded-2xl border border-[#E7DFD6] bg-white p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="font-semibold">{formatLongDate(block.date)}</div>
+                                  <div className="mt-1 text-sm text-neutral-700">
+                                    {block.isAllDay ? "All day blocked" : `${block.startTime} - ${block.endTime}`}
+                                  </div>
+                                  {block.note ? (
+                                    <div className="mt-1 text-sm text-neutral-600">{block.note}</div>
+                                  ) : null}
+                                </div>
+
+                                <Button
+                                  variant="outline"
+                                  className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                  onClick={() => deleteBlockedTime(block.id)}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
                 <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base">Appointments</CardTitle>
@@ -1666,13 +2277,13 @@ export default function App() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="font-medium">Database-backed booking system</div>
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Private Owner Calendar
+              Services + Time Blocking
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
-            <li>Bookings are shared across devices</li>
-            <li>Calendar is hidden from the public</li>
-            <li>Only unlocked admin can view the calendar</li>
+            <li>Services can now be added, edited, hidden, and reordered in Admin</li>
+            <li>You can block off full days or custom time ranges</li>
+            <li>Public booking only shows open times that remain available</li>
           </ul>
         </div>
       </footer>
