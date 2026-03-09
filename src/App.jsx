@@ -79,7 +79,7 @@ const DEFAULT_SETTINGS = {
   slotStepMin: 15,
   bufferMin: 10,
   requirePhone: true,
-  adminPin: "1234",
+  adminPin: "1425",
 };
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -1403,7 +1403,7 @@ export default function App() {
                           <div className="flex items-center gap-2 font-medium">
                             <Lock className="h-4 w-4" /> Enter PIN to manage appointments
                           </div>
-                          <div className="mt-1 text-xs text-neutral-600">Default is 1234.</div>
+                          <div className="mt-1 text-xs text-neutral-600">Use your unlock PIN.</div>
                         </div>
 
                         <div className="grid gap-2">
@@ -1564,14 +1564,8 @@ export default function App() {
 
                     <Separator className="bg-[#E7DFD6]" />
 
-                    <div className="grid gap-2">
-                      <Label>Admin PIN</Label>
-                      <Input
-                        type="password"
-                        value={settings.adminPin}
-                        onChange={(e) => setSettings((p) => ({ ...p, adminPin: e.target.value }))}
-                        className="border-[#E7DFD6] bg-white"
-                      />
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4 text-sm text-neutral-700">
+                      Admin access uses your unlock PIN only.
                     </div>
                   </CardContent>
                 </Card>
