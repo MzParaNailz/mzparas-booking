@@ -95,6 +95,12 @@ function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60000);
 }
 
+function addDays(date, days) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
 function overlaps(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd;
 }
@@ -285,6 +291,7 @@ export default function App() {
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("stripe");
   const [calendarStartDate, setCalendarStartDate] = useState(() => toISODate(new Date()));
+  const [activeTab, setActiveTab] = useState("book");
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -329,6 +336,12 @@ export default function App() {
     setErrorMsg("");
     setSuccessMsg("");
   }, [selectedDate, selectedServiceId]);
+
+  useEffect(() => {
+    if (!adminAuthed && activeTab === "calendar") {
+      setActiveTab("book");
+    }
+  }, [adminAuthed, activeTab]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -511,7 +524,7 @@ export default function App() {
     const days = [];
 
     for (let i = 0; i < 7; i += 1) {
-      const day = addMinutes(start, i * 24 * 60);
+      const day = addDays(start, i);
       const iso = toISODate(day);
       const dayAppointments = appointments
         .filter((a) => a.date === iso)
@@ -529,7 +542,7 @@ export default function App() {
 
   function shiftCalendar(days) {
     const start = parseISODate(calendarStartDate);
-    const shifted = addMinutes(start, days * 24 * 60);
+    const shifted = addDays(start, days);
     setCalendarStartDate(toISODate(shifted));
   }
 
@@ -853,17 +866,17 @@ export default function App() {
               Clean White Luxury
             </Badge>
             <Badge className="rounded-xl bg-black text-white hover:bg-black">
-              Live Calendar
+              Owner Calendar
             </Badge>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        <Tabs defaultValue="book" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-white border border-[#E7DFD6] sm:w-[620px]">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className={`grid w-full bg-white border border-[#E7DFD6] ${adminAuthed ? "grid-cols-3 sm:w-[620px]" : "grid-cols-2 sm:w-[420px]"}`}>
             <TabsTrigger value="book">Book</TabsTrigger>
-            <TabsTrigger value="calendar">Calendar</TabsTrigger>
+            {adminAuthed ? <TabsTrigger value="calendar">Calendar</TabsTrigger> : null}
             <TabsTrigger value="admin">Admin</TabsTrigger>
           </TabsList>
 
@@ -1275,103 +1288,105 @@ export default function App() {
           </TabsContent>
 
           <TabsContent value="calendar" className="mt-6">
-            <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
-              <CardHeader>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <CardTitle className="text-base">Live appointment calendar</CardTitle>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                      onClick={() => shiftCalendar(-7)}
-                    >
-                      Previous 7 days
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                      onClick={() => setCalendarStartDate(todayISO)}
-                    >
-                      Today
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                      onClick={() => shiftCalendar(7)}
-                    >
-                      Next 7 days
-                    </Button>
+            {adminAuthed ? (
+              <Card className="rounded-2xl bg-white border border-[#E7DFD6] shadow-sm">
+                <CardHeader>
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <CardTitle className="text-base">Live appointment calendar</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                        onClick={() => shiftCalendar(-7)}
+                      >
+                        Previous 7 days
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                        onClick={() => setCalendarStartDate(todayISO)}
+                      >
+                        Today
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                        onClick={() => shiftCalendar(7)}
+                      >
+                        Next 7 days
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {loadingBookings ? (
-                  <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
-                    Loading calendar...
-                  </div>
-                ) : (
-                  <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-                    {calendarDays.map((day) => (
-                      <div key={day.iso} className="rounded-2xl border border-[#E7DFD6] bg-[#FCFAF7] p-4">
-                        <div className="mb-4">
-                          <div className="text-sm text-neutral-500">{day.iso}</div>
-                          <div className="font-semibold">{day.label}</div>
-                        </div>
-
-                        {day.appointments.length === 0 ? (
-                          <div className="rounded-2xl border border-dashed border-[#E7DFD6] bg-white p-4 text-sm text-neutral-500">
-                            No appointments
+                </CardHeader>
+                <CardContent>
+                  {loadingBookings ? (
+                    <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-6 text-center text-sm text-neutral-700">
+                      Loading calendar...
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                      {calendarDays.map((day) => (
+                        <div key={day.iso} className="rounded-2xl border border-[#E7DFD6] bg-[#FCFAF7] p-4">
+                          <div className="mb-4">
+                            <div className="text-sm text-neutral-500">{day.iso}</div>
+                            <div className="font-semibold">{day.label}</div>
                           </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {day.appointments.map((appt) => {
-                              const start = new Date(appt.startISO);
-                              const end = new Date(appt.endISO);
-                              const serviceNames = appt.serviceIds
-                                .map((id) => services.find((s) => s.id === id)?.name)
-                                .filter(Boolean)
-                                .join(", ");
 
-                              return (
-                                <motion.div
-                                  key={appt.id}
-                                  initial={{ opacity: 0, y: 6 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  className="rounded-2xl border border-[#E7DFD6] bg-white p-4"
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      <div className="font-semibold">{appt.customer?.name || "Client"}</div>
-                                      <div className="mt-1 text-sm text-neutral-700">
-                                        {formatTime(start)} – {formatTime(end)}
+                          {day.appointments.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-[#E7DFD6] bg-white p-4 text-sm text-neutral-500">
+                              No appointments
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {day.appointments.map((appt) => {
+                                const start = new Date(appt.startISO);
+                                const end = new Date(appt.endISO);
+                                const serviceNames = appt.serviceIds
+                                  .map((id) => services.find((s) => s.id === id)?.name)
+                                  .filter(Boolean)
+                                  .join(", ");
+
+                                return (
+                                  <motion.div
+                                    key={appt.id}
+                                    initial={{ opacity: 0, y: 6 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="rounded-2xl border border-[#E7DFD6] bg-white p-4"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <div className="font-semibold">{appt.customer?.name || "Client"}</div>
+                                        <div className="mt-1 text-sm text-neutral-700">
+                                          {formatTime(start)} – {formatTime(end)}
+                                        </div>
+                                        <div className="mt-1 text-sm text-neutral-600">{serviceNames}</div>
+                                        {appt.customer?.phone ? (
+                                          <div className="mt-1 text-xs text-neutral-500">{appt.customer.phone}</div>
+                                        ) : null}
                                       </div>
-                                      <div className="mt-1 text-sm text-neutral-600">{serviceNames}</div>
-                                      {appt.customer?.phone ? (
-                                        <div className="mt-1 text-xs text-neutral-500">{appt.customer.phone}</div>
-                                      ) : null}
+                                      <div className="text-right">
+                                        <div className="font-semibold">${appt.totalPrice}</div>
+                                        <div className="mt-1 text-xs text-neutral-500">{appt.paymentMethod || "payment"}</div>
+                                      </div>
                                     </div>
-                                    <div className="text-right">
-                                      <div className="font-semibold">${appt.totalPrice}</div>
-                                      <div className="mt-1 text-xs text-neutral-500">{appt.paymentMethod || "payment"}</div>
-                                    </div>
-                                  </div>
 
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusBadgeClasses(appt.status)}`}>
-                                      {appt.status.replaceAll("_", " ")}
-                                    </span>
-                                  </div>
-                                </motion.div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusBadgeClasses(appt.status)}`}>
+                                        {appt.status.replaceAll("_", " ")}
+                                      </span>
+                                    </div>
+                                  </motion.div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
           </TabsContent>
 
           <TabsContent value="admin" className="mt-6">
@@ -1443,7 +1458,7 @@ export default function App() {
                             <div className="flex items-center gap-2 font-medium">
                               <Shield className="h-4 w-4" /> Admin unlocked
                             </div>
-                            <div className="mt-1 text-xs text-neutral-600">Bookings now live in Supabase and visible across devices.</div>
+                            <div className="mt-1 text-xs text-neutral-600">Calendar and bookings are visible only after PIN unlock.</div>
                           </div>
                         </div>
 
@@ -1451,9 +1466,20 @@ export default function App() {
                           <Button
                             variant="outline"
                             className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
-                            onClick={() => setAdminAuthed(false)}
+                            onClick={() => {
+                              setAdminAuthed(false);
+                              setActiveTab("book");
+                            }}
                           >
                             Lock Admin
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            className="h-11 rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                            onClick={() => setActiveTab("calendar")}
+                          >
+                            Open calendar
                           </Button>
 
                           <Button
@@ -1646,13 +1672,13 @@ export default function App() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="font-medium">Database-backed booking system</div>
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Calendar Live
+              Private Owner Calendar
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
-            <li>Bookings are now shared across devices</li>
-            <li>Calendar view shows live appointments by day</li>
-            <li>Admin actions update live records instantly</li>
+            <li>Bookings are shared across devices</li>
+            <li>Calendar is hidden from the public</li>
+            <li>Only unlocked admin can view the calendar</li>
           </ul>
         </div>
       </footer>
