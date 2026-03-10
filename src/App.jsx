@@ -34,7 +34,7 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/lib/supabase";
 
-const PENDING_KEY = "mzparas_pending_booking_v8";
+const PENDING_KEY = "mzparas_pending_booking_v9";
 const REQUIRED_DEPOSIT = 50;
 const ZELLE_RECIPIENT = "516-451-4570";
 
@@ -1236,6 +1236,75 @@ export default function App() {
     };
   }
 
+  function findFirstAvailableSlotForAppointmentOnDate(appt, targetDate) {
+    if (!appt || !targetDate) return null;
+
+    const dayOfWeekForTarget = parseISODate(targetDate).getDay();
+    const targetHours = hours?.[dayOfWeekForTarget] ?? { open: "10:00", close: "18:00", closed: false };
+    if (targetHours.closed) return null;
+
+    const targetBlocks = blockedTimes.filter((b) => b.date === targetDate);
+    if (targetBlocks.some((b) => b.isAllDay)) return null;
+
+    const [openH, openM] = targetHours.open.split(":").map(Number);
+    const [closeH, closeM] = targetHours.close.split(":").map(Number);
+
+    const day = parseISODate(targetDate);
+    const open = new Date(day.getFullYear(), day.getMonth(), day.getDate(), openH, openM, 0, 0);
+    const close = new Date(day.getFullYear(), day.getMonth(), day.getDate(), closeH, closeM, 0, 0);
+
+    const step = clamp(settings.slotStepMin, 5, 60);
+    const buffer = clamp(settings.bufferMin, 0, 60);
+    const needed = (appt.totalDurationMin || 0) + buffer;
+
+    const otherAppointments = appointments
+      .filter((a) =>
+        a.id !== appt.id &&
+        a.date === targetDate &&
+        (a.status === "confirmed" || a.status === "completed" || a.status === "zelle_pending_verification")
+      )
+      .map((a) => ({ start: new Date(a.startISO), end: new Date(a.endISO) }));
+
+    const blockedRanges = targetBlocks
+      .filter((b) => !b.isAllDay && b.startTime && b.endTime)
+      .map((b) => {
+        const [sh, sm] = b.startTime.split(":").map(Number);
+        const [eh, em] = b.endTime.split(":").map(Number);
+        return {
+          start: new Date(day.getFullYear(), day.getMonth(), day.getDate(), sh, sm, 0, 0),
+          end: new Date(day.getFullYear(), day.getMonth(), day.getDate(), eh, em, 0, 0),
+        };
+      });
+
+    for (let t = new Date(open); t <= close; t = addMinutes(t, step)) {
+      const end = addMinutes(t, needed);
+      if (end > close) continue;
+
+      let available = true;
+
+      if (targetDate === todayISO) {
+        const grace = addMinutes(new Date(), 10);
+        if (t < grace) available = false;
+      }
+
+      const conflict = otherAppointments.some((a) => overlaps(t, end, a.start, a.end));
+      if (conflict) available = false;
+
+      const blockedConflict = blockedRanges.some((b) => overlaps(t, end, b.start, b.end));
+      if (blockedConflict) available = false;
+
+      if (available) {
+        return {
+          targetDate,
+          startISO: t.toISOString(),
+          endISO: end.toISOString(),
+        };
+      }
+    }
+
+    return null;
+  }
+
   async function handleCalendarDrop(appointmentId, targetDate) {
     setDragOverDate("");
     setDraggedAppointmentId("");
@@ -1243,10 +1312,20 @@ export default function App() {
     const appt = appointments.find((a) => a.id === appointmentId);
     if (!appt) return;
 
-    const result = canMoveAppointmentToDate(appt, targetDate);
+    let result = canMoveAppointmentToDate(appt, targetDate);
+
     if (!result.ok) {
-      setErrorMsg(result.message);
-      return;
+      const fallback = findFirstAvailableSlotForAppointmentOnDate(appt, targetDate);
+      if (!fallback) {
+        setErrorMsg(result.message || "Could not move appointment to that date.");
+        return;
+      }
+      result = {
+        ok: true,
+        targetDate: fallback.targetDate,
+        startISO: fallback.startISO,
+        endISO: fallback.endISO,
+      };
     }
 
     const { error } = await supabase
@@ -1531,7 +1610,7 @@ export default function App() {
               Multi-Service Booking
             </Badge>
             <Badge className="rounded-xl bg-black text-white hover:bg-black">
-              Add-On Ready
+              Drag & Drop Fixed
             </Badge>
           </div>
         </div>
@@ -1796,7 +1875,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => setTimeMenuOpen((prev) => !prev)}
-                          className="flex h-11 w-full items-center justify-between rounded-2xl border border-[#E7DFD6] bg-white px-4 text-left text-sm shadow-sm transition hover:bg-[#F8F3ED]"
+                          className="flex h-11 w-full items-center justify-between rounded-2xl border border-[#E7DFD6] bg-white px-4 text-left text-sm shadow-sm transition hover:bg-[#F8F3ED] focus:outline-none focus:ring-0 active:bg-white"
                         >
                           <span className={selectedTimeLabel ? "text-neutral-900" : "text-neutral-500"}>
                             {selectedTimeLabel || "Choose a time slot"}
@@ -2002,10 +2081,11 @@ export default function App() {
                           return (
                             <motion.button
                               key={a.id}
+                              type="button"
                               initial={{ opacity: 0, y: 6 }}
                               animate={{ opacity: 1, y: 0 }}
                               onClick={() => openAppointmentDetails(a)}
-                              className="w-full rounded-2xl border border-[#E7DFD6] bg-white p-4 text-left transition hover:bg-[#FCFAF7]"
+                              className="w-full rounded-2xl border border-[#E7DFD6] bg-white p-4 text-left transition hover:bg-[#FCFAF7] focus:outline-none focus:ring-0 active:bg-white"
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div>
@@ -2084,7 +2164,9 @@ export default function App() {
                           }}
                           onDrop={(e) => {
                             e.preventDefault();
+                            e.stopPropagation();
                             const appointmentId = e.dataTransfer.getData("text/plain") || draggedAppointmentId;
+                            if (!appointmentId) return;
                             handleCalendarDrop(appointmentId, day.iso);
                           }}
                           className={`rounded-2xl border p-4 transition ${
@@ -2135,6 +2217,7 @@ export default function App() {
                                     animate={{ opacity: 1, y: 0 }}
                                     draggable
                                     onDragStart={(e) => {
+                                      e.dataTransfer.effectAllowed = "move";
                                       e.dataTransfer.setData("text/plain", appt.id);
                                       setDraggedAppointmentId(appt.id);
                                     }}
@@ -2142,36 +2225,31 @@ export default function App() {
                                       setDraggedAppointmentId("");
                                       setDragOverDate("");
                                     }}
+                                    onClick={() => openAppointmentDetails(appt)}
                                     className="rounded-2xl border border-[#E7DFD6] bg-white p-4 transition hover:bg-[#FCFAF7] cursor-grab active:cursor-grabbing"
                                   >
-                                    <button
-                                      type="button"
-                                      onClick={() => openAppointmentDetails(appt)}
-                                      className="w-full text-left"
-                                    >
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div>
-                                          <div className="font-semibold">{appt.customer?.name || "Client"}</div>
-                                          <div className="mt-1 text-sm text-neutral-700">
-                                            {formatTime(start)} – {formatTime(end)}
-                                          </div>
-                                          <div className="mt-1 text-sm text-neutral-600">{serviceNames}</div>
-                                          {appt.customer?.phone ? (
-                                            <div className="mt-1 text-xs text-neutral-500">{appt.customer.phone}</div>
-                                          ) : null}
+                                    <div className="flex items-start justify-between gap-3 select-none">
+                                      <div>
+                                        <div className="font-semibold">{appt.customer?.name || "Client"}</div>
+                                        <div className="mt-1 text-sm text-neutral-700">
+                                          {formatTime(start)} – {formatTime(end)}
                                         </div>
-                                        <div className="text-right">
-                                          <div className="font-semibold">${appt.totalPrice}</div>
-                                          <div className="mt-1 text-xs text-neutral-500">{appt.paymentMethod || "payment"}</div>
-                                        </div>
+                                        <div className="mt-1 text-sm text-neutral-600">{serviceNames}</div>
+                                        {appt.customer?.phone ? (
+                                          <div className="mt-1 text-xs text-neutral-500">{appt.customer.phone}</div>
+                                        ) : null}
                                       </div>
+                                      <div className="text-right">
+                                        <div className="font-semibold">${appt.totalPrice}</div>
+                                        <div className="mt-1 text-xs text-neutral-500">{appt.paymentMethod || "payment"}</div>
+                                      </div>
+                                    </div>
 
-                                      <div className="mt-3 flex flex-wrap gap-2">
-                                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusBadgeClasses(appt.status)}`}>
-                                          {appt.status.replaceAll("_", " ")}
-                                        </span>
-                                      </div>
-                                    </button>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusBadgeClasses(appt.status)}`}>
+                                        {appt.status.replaceAll("_", " ")}
+                                      </span>
+                                    </div>
                                   </motion.div>
                                 );
                               })}
@@ -2630,7 +2708,7 @@ export default function App() {
                             <button
                               key={a.id}
                               onClick={() => openAppointmentDetails(a)}
-                              className="w-full rounded-2xl border border-[#E7DFD6] bg-white p-4 text-left transition hover:bg-[#FCFAF7]"
+                              className="w-full rounded-2xl border border-[#E7DFD6] bg-white p-4 text-left transition hover:bg-[#FCFAF7] focus:outline-none focus:ring-0 active:bg-white"
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div>
@@ -2670,13 +2748,13 @@ export default function App() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="font-medium">Database-backed booking system</div>
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Multi-Service Booking
+              Reschedule Fixes
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
-            <li>Clients can now select a main service and add extra services</li>
-            <li>Total duration and pricing update automatically</li>
-            <li>Bookings save all selected services together</li>
+            <li>Black overlay removed from appointment clicks</li>
+            <li>Black overlay removed from modal close button</li>
+            <li>Drag-and-drop now falls back to the first open slot on the target date</li>
           </ul>
         </div>
       </footer>
@@ -2705,7 +2783,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={closeAppointmentDetails}
-                  className="rounded-full border border-[#E7DFD6] p-2 transition hover:bg-[#F8F3ED]"
+                  className="rounded-full border border-[#E7DFD6] bg-white p-2 transition hover:bg-[#F8F3ED] focus:outline-none focus:ring-0 active:bg-white"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -2776,7 +2854,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => setRescheduleMenuOpen((prev) => !prev)}
-                            className="flex h-11 w-full items-center justify-between rounded-2xl border border-[#E7DFD6] bg-white px-4 text-left text-sm shadow-sm transition hover:bg-[#F8F3ED]"
+                            className="flex h-11 w-full items-center justify-between rounded-2xl border border-[#E7DFD6] bg-white px-4 text-left text-sm shadow-sm transition hover:bg-[#F8F3ED] focus:outline-none focus:ring-0 active:bg-white"
                           >
                             <span className={rescheduleTimeISO ? "text-neutral-900" : "text-neutral-500"}>
                               {rescheduleTimeISO
