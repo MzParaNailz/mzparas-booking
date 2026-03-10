@@ -34,7 +34,7 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/lib/supabase";
 
-const PENDING_KEY = "mzparas_pending_booking_v7";
+const PENDING_KEY = "mzparas_pending_booking_v8";
 const REQUIRED_DEPOSIT = 50;
 const ZELLE_RECIPIENT = "516-451-4570";
 
@@ -335,7 +335,7 @@ export default function App() {
   const [blockedTimes, setBlockedTimes] = useState([]);
 
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()));
-  const [selectedServiceId, setSelectedServiceId] = useState("");
+  const [selectedServiceIds, setSelectedServiceIds] = useState([]);
   const [selectedTimeISO, setSelectedTimeISO] = useState(null);
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("stripe");
@@ -424,14 +424,14 @@ export default function App() {
         return;
       }
       setServices(DEFAULT_SERVICES);
-      setSelectedServiceId(DEFAULT_SERVICES[0].id);
+      setSelectedServiceIds([DEFAULT_SERVICES[0].id]);
       return;
     }
 
     setServices(rows);
-    if (!selectedServiceId) {
+    if (selectedServiceIds.length === 0) {
       const firstActive = rows.find((s) => s.isActive);
-      setSelectedServiceId(firstActive?.id || rows[0]?.id || "");
+      if (firstActive) setSelectedServiceIds([firstActive.id]);
     }
   }
 
@@ -457,17 +457,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedServiceId && activeServices.length > 0) {
-      setSelectedServiceId(activeServices[0].id);
+    if (selectedServiceIds.length === 0 && activeServices.length > 0) {
+      setSelectedServiceIds([activeServices[0].id]);
     }
-  }, [activeServices, selectedServiceId]);
+  }, [activeServices, selectedServiceIds]);
 
   useEffect(() => {
     setSelectedTimeISO(null);
     setTimeMenuOpen(false);
     setErrorMsg("");
     setSuccessMsg("");
-  }, [selectedDate, selectedServiceId]);
+  }, [selectedDate, selectedServiceIds]);
 
   useEffect(() => {
     if (!adminAuthed && activeTab === "calendar") {
@@ -539,8 +539,10 @@ export default function App() {
   }, [services, settings.locationLine]);
 
   const selectedServices = useMemo(
-    () => services.filter((s) => s.id === selectedServiceId),
-    [services, selectedServiceId]
+    () => selectedServiceIds
+      .map((id) => services.find((s) => s.id === id))
+      .filter(Boolean),
+    [services, selectedServiceIds]
   );
 
   const totalDuration = useMemo(
@@ -584,11 +586,6 @@ export default function App() {
   const todayRevenue = useMemo(() => {
     return todayAppointments.reduce((sum, a) => sum + (a.totalPrice || 0), 0);
   }, [todayAppointments]);
-
-  const selectedService = useMemo(
-    () => services.find((s) => s.id === selectedServiceId) || activeServices[0] || null,
-    [services, selectedServiceId, activeServices]
-  );
 
   const blockedTimesForSelectedDate = useMemo(
     () => blockedTimes.filter((b) => b.date === selectedDate),
@@ -722,7 +719,7 @@ export default function App() {
   }
 
   function validate() {
-    if (!selectedServiceId) return "Please select a service.";
+    if (selectedServiceIds.length === 0) return "Please select at least one service.";
     if (!selectedTimeISO) return "Please pick a time.";
     if (!customerName.trim()) return "Please enter your name.";
     if (settings.requirePhone && !customerPhone.trim()) return "Please enter your phone number.";
@@ -734,6 +731,21 @@ export default function App() {
       .map((id) => services.find((s) => s.id === id)?.name)
       .filter(Boolean)
       .join(", ");
+  }
+
+  function addServiceToSelection(serviceId) {
+    if (!serviceId) return;
+    setSelectedServiceIds((prev) => {
+      if (prev.includes(serviceId)) return prev;
+      return [...prev, serviceId];
+    });
+  }
+
+  function removeServiceFromSelection(serviceId) {
+    setSelectedServiceIds((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((id) => id !== serviceId);
+    });
   }
 
   function getAvailableRescheduleOptions(appt, targetDate) {
@@ -889,7 +901,7 @@ export default function App() {
       date: selectedDate,
       startISO: start.toISOString(),
       endISO: end.toISOString(),
-      serviceIds: [selectedServiceId],
+      serviceIds: selectedServiceIds,
       totalDurationMin: totalDuration,
       totalPrice,
       customer: {
@@ -950,7 +962,7 @@ export default function App() {
       date: selectedDate,
       startISO: start.toISOString(),
       endISO: end.toISOString(),
-      serviceIds: [selectedServiceId],
+      serviceIds: selectedServiceIds,
       totalDurationMin: totalDuration,
       totalPrice,
       customer: {
@@ -1484,6 +1496,11 @@ export default function App() {
       .join(", ");
   }, [lastZelleBooking, services]);
 
+  const availableAdditionalServices = useMemo(
+    () => activeServices.filter((s) => !selectedServiceIds.includes(s.id)),
+    [activeServices, selectedServiceIds]
+  );
+
   return (
     <div className="min-h-screen bg-[#F5F0E9] text-neutral-900">
       <header className="sticky top-0 z-20 border-b border-[#E7DFD6] bg-[#F5F0E9]/90 backdrop-blur">
@@ -1511,10 +1528,10 @@ export default function App() {
 
           <div className="hidden items-center gap-2 sm:flex">
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Drag & Drop
+              Multi-Service Booking
             </Badge>
             <Badge className="rounded-xl bg-black text-white hover:bg-black">
-              Calendar Reschedule
+              Add-On Ready
             </Badge>
           </div>
         </div>
@@ -1636,8 +1653,17 @@ export default function App() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="grid gap-2">
-                      <Label>Service menu</Label>
-                      <Select value={selectedServiceId} onValueChange={setSelectedServiceId}>
+                      <Label>Main service</Label>
+                      <Select
+                        value={selectedServiceIds[0] || ""}
+                        onValueChange={(value) => {
+                          if (!value) return;
+                          setSelectedServiceIds((prev) => {
+                            const extras = prev.slice(1).filter((id) => id !== value);
+                            return [value, ...extras];
+                          });
+                        }}
+                      >
                         <SelectTrigger className="border-[#E7DFD6] bg-white">
                           <SelectValue placeholder="Choose a service" />
                         </SelectTrigger>
@@ -1651,11 +1677,59 @@ export default function App() {
                       </Select>
                     </div>
 
-                    {selectedService ? (
-                      <div className="rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-4">
-                        <div className="font-medium">{selectedService.name}</div>
-                        <div className="mt-1 text-sm text-neutral-600">{selectedService.durationMin} minutes</div>
-                        <div className="mt-2 text-lg font-semibold">${selectedService.price}</div>
+                    <div className="grid gap-2">
+                      <Label>Add another service</Label>
+                      <Select
+                        value=""
+                        onValueChange={(value) => addServiceToSelection(value)}
+                      >
+                        <SelectTrigger className="border-[#E7DFD6] bg-white">
+                          <SelectValue placeholder="Add an additional service" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white">
+                          {availableAdditionalServices.length === 0 ? (
+                            <SelectItem value="no-more-services" disabled>
+                              No more available services
+                            </SelectItem>
+                          ) : (
+                            availableAdditionalServices.map((service) => (
+                              <SelectItem key={service.id} value={service.id}>
+                                {service.name} — {service.durationMin} min — ${service.price}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {selectedServices.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedServices.map((service, index) => (
+                          <div
+                            key={service.id}
+                            className="flex items-center justify-between rounded-2xl border border-[#E7DFD6] bg-[#F8F3ED] p-3"
+                          >
+                            <div>
+                              <div className="font-medium">
+                                {index === 0 ? `Main: ${service.name}` : service.name}
+                              </div>
+                              <div className="text-sm text-neutral-600">
+                                {service.durationMin} min • ${service.price}
+                              </div>
+                            </div>
+
+                            {selectedServices.length > 1 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="rounded-2xl border-[#E7DFD6] bg-white text-neutral-900 hover:bg-[#EFE7DD]"
+                                onClick={() => removeServiceFromSelection(service.id)}
+                              >
+                                Remove
+                              </Button>
+                            ) : null}
+                          </div>
+                        ))}
                       </div>
                     ) : null}
 
@@ -2596,13 +2670,13 @@ export default function App() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="font-medium">Database-backed booking system</div>
             <Badge className="rounded-xl bg-[#EDE4DA] text-neutral-900 hover:bg-[#EDE4DA]">
-              Drag Drop Reschedule
+              Multi-Service Booking
             </Badge>
           </div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700">
-            <li>Drag appointment cards in calendar view to move them to another date</li>
-            <li>The original appointment time is preserved during drag-drop moves</li>
-            <li>Blocked days, closed days, and conflicts are still enforced</li>
+            <li>Clients can now select a main service and add extra services</li>
+            <li>Total duration and pricing update automatically</li>
+            <li>Bookings save all selected services together</li>
           </ul>
         </div>
       </footer>
